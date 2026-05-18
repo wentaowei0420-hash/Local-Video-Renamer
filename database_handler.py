@@ -45,3 +45,35 @@ class VideoDatabase:
             conn.commit()
 
         return success_count
+
+    def list_videos(self, search_text=''):
+        """读取数据库台账，必要时按编号/标题/演员筛选。"""
+        search_text = (search_text or '').strip()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            if search_text:
+                like_value = f'%{search_text}%'
+                cursor.execute('''
+                    SELECT code, title, author, duration, size
+                    FROM processed_videos
+                    WHERE code LIKE ? OR title LIKE ? OR author LIKE ?
+                    ORDER BY code
+                ''', (like_value, like_value, like_value))
+            else:
+                cursor.execute('''
+                    SELECT code, title, author, duration, size
+                    FROM processed_videos
+                    ORDER BY code
+                ''')
+
+            return [
+                {
+                    'code': row[0] or '',
+                    'title': row[1] or '',
+                    'author': row[2] or '',
+                    'duration': row[3] or '',
+                    'size': row[4] or '',
+                }
+                for row in cursor.fetchall()
+            ]

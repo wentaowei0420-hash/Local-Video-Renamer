@@ -1,5 +1,3 @@
-import sqlite3
-from pathlib import Path
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog,
@@ -15,9 +13,10 @@ from PyQt5.QtWidgets import (
 
 
 class DatabaseViewerWindow(QDialog):
-    def __init__(self, db_path='video_database.db', parent=None):
+    def __init__(self, backend_client, parent=None):
         super().__init__(parent)
-        self.db_path = Path(db_path)
+        self.backend_client = backend_client
+        self.rows = []
         self.init_ui()
         self.load_data()
 
@@ -64,42 +63,34 @@ class DatabaseViewerWindow(QDialog):
         self.setLayout(layout)
 
     def load_data(self):
-        """连接 SQLite 数据库并读取所有数据渲染到表格"""
+        """从后端读取数据库台账并渲染到表格。"""
         self.table.setRowCount(0)
-        if not self.db_path.exists():
-            return
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT code, title, author, duration, size FROM processed_videos')
-                rows = cursor.fetchall()
-
-                for row_idx, row_data in enumerate(rows):
-                    self.table.insertRow(row_idx)
-                    for col_idx, value in enumerate(row_data):
-                        item = QTableWidgetItem(str(value if value is not None else ''))
-
-                        # 让编号、作者、时长等列居中显示，更美观
-                        if col_idx in (0, 2, 3, 4):
-                            item.setTextAlignment(Qt.AlignCenter)
-
-                        self.table.setItem(row_idx, col_idx, item)
-
-            # 加载完数据后顺便应用一下当前的搜索框筛选状态
-            self.filter_data(self.search_input.text())
+            self.rows = self.backend_client.list_videos()
+            self.render_rows(self.rows)
         except Exception as e:
             print(f"读取数据库失败: {e}")
 
+    def render_rows(self, rows):
+        self.table.setRowCount(0)
+        fields = ('code', 'title', 'author', 'duration', 'size')
+
+        for row_idx, row_data in enumerate(rows):
+            self.table.insertRow(row_idx)
+            for col_idx, field in enumerate(fields):
+                item = QTableWidgetItem(str(row_data.get(field, '')))
+
+                # 让编号、作者、时长等列居中显示，更美观
+                if col_idx in (0, 2, 3, 4):
+                    item.setTextAlignment(Qt.AlignCenter)
+
+                self.table.setItem(row_idx, col_idx, item)
+
     def filter_data(self, text):
-        """实现实时搜索的黑魔法功能"""
-        text = text.lower().strip()
-        for row in range(self.table.rowCount()):
-            match = False
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                if item and text in item.text().lower():
-                    match = True
-                    break
-            # 如果这行的所有列都不包含搜索关键词，就把这行隐藏掉
-            self.table.setRowHidden(row, not match)
+        """通过后端执行实时搜索。"""
+        try:
+            self.rows = self.backend_client.list_videos(text)
+            self.render_rows(self.rows)
+        except Exception as e:
+            print(f"筛选数据库失败: {e}")

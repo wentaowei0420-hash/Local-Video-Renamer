@@ -1,4 +1,6 @@
 import sys
+import subprocess
+import time
 from pathlib import Path
 
 from PyQt5.QtCore import Qt
@@ -17,9 +19,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from video_renamer_api import VideoRenamerAPI
-from database_handler import VideoDatabase
-# 👇 导入我们刚刚新建的数据库查看器窗口
+from backend_client import BackendClient
 from db_viewer import DatabaseViewerWindow
 
 
@@ -27,18 +27,46 @@ class VidNormApp(QWidget):
     def __init__(self):
         super().__init__()
         self.pending_renames = []
+        self.backend_process = None
+        self.backend_client = BackendClient()
 
-        self.csv_path = Path(__file__).with_name('目录统计 - 详细介绍.csv')
-        self.api = VideoRenamerAPI(self.csv_path)
-        self.db = VideoDatabase()
-
+        self.ensure_backend_running()
         self.load_csv_data()
         self.init_ui()
 
+    def ensure_backend_running(self):
+        if self.is_backend_alive():
+            return
+
+        backend_script = Path(__file__).with_name('backend_server.py')
+        creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        self.backend_process = subprocess.Popen(
+            [sys.executable, str(backend_script)],
+            cwd=str(backend_script.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags,
+        )
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if self.is_backend_alive():
+                return
+            time.sleep(0.2)
+
+        raise RuntimeError('后端服务启动超时')
+
+    def is_backend_alive(self):
+        try:
+            self.backend_client.health()
+            return True
+        except Exception:
+            return False
+
     def load_csv_data(self):
         try:
-            self.api.load_database()
-            print(f"成功加载 {len(self.api.video_db)} 条视频元数据")
+            result = self.backend_client.reload_database()
+            print(f"成功加载 {result['count']} 条视频元数据")
         except Exception as exc:
             QMessageBox.critical(self, "CSV 加载失败", f"无法读取数据库文件：\n{str(exc)}")
 
@@ -108,7 +136,8 @@ class VidNormApp(QWidget):
             return
 
         try:
-            self.pending_renames = self.api.scan_folder(folder_path)
+            result = self.backend_client.scan_folder(folder_path)
+            self.pending_renames = result.get('plans', [])
         except Exception as exc:
             QMessageBox.warning(self, "错误", str(exc))
             return
@@ -118,10 +147,10 @@ class VidNormApp(QWidget):
 
         for row, plan in enumerate(self.pending_renames):
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(plan.old_name))
-            self.table.setItem(row, 1, QTableWidgetItem(plan.new_name))
+            self.table.setItem(row, 0, QTableWidgetItem(plan.get('old_name', '')))
+            self.table.setItem(row, 1, QTableWidgetItem(plan.get('new_name', '')))
 
-            if plan.needs_rename:
+            if plan.get('needs_rename'):
                 status_item = QTableWidgetItem("待重命名")
                 status_item.setForeground(Qt.blue)
                 has_files_to_rename = True
@@ -145,7 +174,8 @@ class VidNormApp(QWidget):
             return
 
         try:
-            success_count = self.db.save_plans(self.pending_renames)
+            result = self.backend_client.save_plans(self.pending_renames)
+            success_count = result.get('success_count', 0)
             QMessageBox.information(
                 self,
                 "写入成功",
@@ -155,25 +185,34 @@ class VidNormApp(QWidget):
             QMessageBox.critical(self, "错误", f"写入数据库失败：\n{str(exc)}")
 
     def execute_rename(self):
-        results = self.api.execute_renames(self.pending_renames)
-        success = 0
+        try:
+            response = self.backend_client.execute_renames(self.pending_renames)
+        except Exception as exc:
+            QMessageBox.critical(self, "错误", f"执行重命名失败：\n{str(exc)}")
+            return
+
+        results = response.get('results', [])
+        success = response.get('success_count', 0)
 
         for row, result in enumerate(results):
             status_item = self.table.item(row, 2)
-            if result.success:
-                status_item.setText("✅ 完成")
-                success += 1
+            if result.get('success'):
+                status_item.setText(f"✅ {result.get('message', '完成')}")
             else:
-                status_item.setText(f"❌ {result.message}")
+                status_item.setText(f"❌ {result.get('message', '错误')}")
 
         QMessageBox.information(self, "结果", f"成功重命名 {success} 个文件。")
         self.btn_execute.setEnabled(False)
 
     # 👇 新增：弹出独立数据库查看器的方法
     def show_db_viewer(self):
-        # 实例化查看器窗口，并将主窗体的数据库路径传递给它
-        viewer = DatabaseViewerWindow(db_path=self.db.db_path, parent=self)
+        viewer = DatabaseViewerWindow(backend_client=self.backend_client, parent=self)
         viewer.exec_()  # 弹出对话框
+
+    def closeEvent(self, event):
+        if self.backend_process and self.backend_process.poll() is None:
+            self.backend_process.terminate()
+        super().closeEvent(event)
 
 
 if __name__ == '__main__':

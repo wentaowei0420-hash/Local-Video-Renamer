@@ -124,6 +124,54 @@ def build_normalized_filename(metadata, extension):
         return f"【{metadata.code}】-{metadata.title}{extension}"
 
 
+def metadata_to_dict(metadata):
+    return {
+        'code': metadata.code,
+        'title': metadata.title,
+        'author': metadata.author,
+        'duration': metadata.duration,
+        'size': metadata.size,
+    }
+
+
+def metadata_from_dict(data):
+    return VideoMetadata(
+        code=data.get('code', ''),
+        title=data.get('title', ''),
+        author=data.get('author', ''),
+        duration=data.get('duration', ''),
+        size=data.get('size', ''),
+    )
+
+
+def plan_to_dict(plan):
+    return {
+        'old_path': str(plan.old_path),
+        'new_path': str(plan.new_path),
+        'old_name': plan.old_name,
+        'new_name': plan.new_name,
+        'needs_rename': plan.needs_rename,
+        'metadata': metadata_to_dict(plan.metadata),
+    }
+
+
+def plan_from_dict(data):
+    return RenamePlan(
+        old_path=Path(data['old_path']),
+        new_path=Path(data['new_path']),
+        metadata=metadata_from_dict(data.get('metadata', {})),
+    )
+
+
+def result_to_dict(result):
+    return {
+        'plan': plan_to_dict(result.plan),
+        'success': result.success,
+        'message': result.message,
+        'error': result.error,
+    }
+
+
 class VideoRenamerAPI:
     def __init__(self, csv_path, video_exts=DEFAULT_VIDEO_EXTS):
         self.csv_path = Path(csv_path)
