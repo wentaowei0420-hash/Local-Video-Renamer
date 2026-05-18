@@ -2,7 +2,7 @@ from pathlib import Path
 
 from actor_identifier import ActorIdentifier
 from database_handler import VideoDatabase
-from path_library import PathLibrary
+from path_library import PathLibrary, summarize_paths
 from video_models import plan_from_dict, plan_to_dict, result_to_dict
 from video_renamer_api import VideoRenamerAPI
 
@@ -81,16 +81,24 @@ class BackendService:
         return {'actors': self.db.list_actors(search_text)}
 
     def list_paths(self):
-        paths = [
-            self.path_library.with_exists_status(record)
-            for record in self.db.list_paths()
-        ]
-        return {'paths': paths}
+        paths = []
+        for record in self.db.list_paths():
+            path_record = self.path_library.with_exists_status(record)
+            if path_record.get('exists'):
+                self.db.update_path_storage_info(path_record['id'], path_record)
+            paths.append(path_record)
+
+        return {
+            'paths': paths,
+            'summary': summarize_paths(paths),
+        }
 
     def add_path(self, folder_path):
         path_record = self.path_library.build_path_record(folder_path)
         saved_record = self.db.add_path(path_record['path'])
-        return {'path': self.path_library.with_exists_status(saved_record)}
+        enriched_record = self.path_library.with_exists_status(saved_record)
+        self.db.update_path_storage_info(enriched_record['id'], enriched_record)
+        return {'path': enriched_record}
 
     def delete_path(self, path_id):
         if path_id is None:

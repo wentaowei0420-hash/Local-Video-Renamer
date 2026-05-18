@@ -32,7 +32,7 @@ class DatabaseViewerWindow(QDialog):
         # --- 顶部工具栏：搜索框和刷新按钮 ---
         top_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText('🔍 输入视频编号、标题或演员，即可实时快速筛选...')
+        self.search_input.setPlaceholderText('🔍 输入视频编号、标题、演员或存放位置，即可实时快速筛选...')
         # 绑定文字变化事件，实现边打字边过滤的秒出效果
         self.search_input.textChanged.connect(self.filter_data)
 
@@ -45,8 +45,8 @@ class DatabaseViewerWindow(QDialog):
 
         # --- 数据库表格主体 ---
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(['视频编号', '视频标题', '作者/演员', '时长', '大小(GB)'])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(['视频编号', '视频标题', '作者/演员', '时长', '大小(GB)', '存放位置'])
 
         # 宽度自适应优化：标题列拉伸占满，其他列自适应文字宽度
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -54,6 +54,7 @@ class DatabaseViewerWindow(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
 
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)  # 禁止在此处直接修改表格
         self.table.setSelectionBehavior(QTableWidget.SelectRows)  # 点击时选中整行
@@ -74,7 +75,7 @@ class DatabaseViewerWindow(QDialog):
 
     def render_rows(self, rows):
         self.table.setRowCount(0)
-        fields = ('code', 'title', 'author', 'duration', 'size')
+        fields = ('code', 'title', 'author', 'duration', 'size', 'storage_location')
 
         for row_idx, row_data in enumerate(rows):
             self.table.insertRow(row_idx)
@@ -82,7 +83,7 @@ class DatabaseViewerWindow(QDialog):
                 item = QTableWidgetItem(str(row_data.get(field, '')))
 
                 # 让编号、作者、时长等列居中显示，更美观
-                if col_idx in (0, 2, 3, 4):
+                if col_idx in (0, 2, 3, 4, 5):
                     item.setTextAlignment(Qt.AlignCenter)
 
                 self.table.setItem(row_idx, col_idx, item)

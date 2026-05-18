@@ -9,6 +9,7 @@ from filename_rules import (
     normalize_text_spacing,
     strip_title_suffix_noise,
 )
+from path_library import get_storage_location_name
 from video_models import (
     RenamePlan,
     RenameResult,
@@ -36,6 +37,7 @@ class VideoRenamerAPI:
         if not folder_path.exists() or not folder_path.is_dir():
             raise FileNotFoundError(f'文件夹不存在: {folder_path}')
 
+        storage_location = get_storage_location_name(folder_path)
         plans = []
         for file_path in folder_path.rglob('*'):
             if not file_path.is_file() or file_path.suffix.lower() not in self.video_exts:
@@ -53,7 +55,7 @@ class VideoRenamerAPI:
             metadata = self.video_db[code]
             new_name = build_normalized_filename(metadata, file_path.suffix)
             new_path = file_path.parent / new_name
-            plans.append(RenamePlan(file_path, new_path, metadata))
+            plans.append(RenamePlan(file_path, new_path, metadata, storage_location))
 
         return plans
 

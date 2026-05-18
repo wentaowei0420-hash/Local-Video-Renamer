@@ -19,6 +19,7 @@ class PathLibraryWindow(QDialog):
         self.backend_client = backend_client
         self.selected_path = ''
         self.paths = []
+        self.summary = {}
         self.init_ui()
         self.load_data()
 
@@ -47,12 +48,25 @@ class PathLibraryWindow(QDialog):
         top_layout.addWidget(btn_refresh)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(['ID', '路径', '状态', '创建时间'])
+        self.table.setColumnCount(8)
+        self.table.setHorizontalHeaderLabels([
+            'ID',
+            '入口',
+            '路径',
+            '总容量',
+            '空闲空间',
+            '已用空间',
+            '使用率',
+            '创建时间',
+        ])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.doubleClicked.connect(self.use_selected_path)
@@ -63,29 +77,68 @@ class PathLibraryWindow(QDialog):
 
     def load_data(self):
         try:
-            self.paths = self.backend_client.list_paths()
-            self.render_rows(self.paths)
+            result = self.backend_client.get_path_library()
+            self.paths = result.get('paths', [])
+            self.summary = result.get('summary', {})
+            self.render_rows(self.paths, self.summary)
         except Exception as exc:
             QMessageBox.critical(self, '错误', f'读取路径库失败：\n{str(exc)}')
 
-    def render_rows(self, paths):
+    def render_rows(self, paths, summary):
         self.table.setRowCount(0)
 
         for row_idx, row_data in enumerate(paths):
             self.table.insertRow(row_idx)
 
+            if row_data.get('exists'):
+                entrance = '🔌 U盘入口'
+            elif row_data.get('uses_last_snapshot'):
+                entrance = '⚠️ 未连接（上次记录）'
+            else:
+                entrance = '⚠️ 未连接'
+            usage_percent = row_data.get('usage_percent', '')
+            usage_text = f'{usage_percent}%' if usage_percent != '' else ''
             values = (
                 row_data.get('id', ''),
+                entrance,
                 row_data.get('path', ''),
-                '可用' if row_data.get('exists') else '不存在',
+                row_data.get('total', ''),
+                row_data.get('free', ''),
+                row_data.get('used', ''),
+                usage_text,
                 row_data.get('created_at', ''),
             )
 
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
-                if col_idx in (0, 2, 3):
+                if col_idx in (0, 1, 3, 4, 5, 6, 7):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row_idx, col_idx, item)
+
+        self.append_summary_row(summary)
+
+    def append_summary_row(self, summary):
+        row_idx = self.table.rowCount()
+        self.table.insertRow(row_idx)
+
+        usage_percent = summary.get('usage_percent', '')
+        usage_text = f'{usage_percent}%' if usage_percent != '' else ''
+        values = (
+            '合计',
+            f"共 {summary.get('path_count', 0)} 条 / 在线 {summary.get('connected_count', 0)} 条",
+            '所有路径',
+            summary.get('total', ''),
+            summary.get('free', ''),
+            summary.get('used', ''),
+            usage_text,
+            '',
+        )
+
+        for col_idx, value in enumerate(values):
+            item = QTableWidgetItem(str(value))
+            item.setTextAlignment(Qt.AlignCenter if col_idx != 2 else Qt.AlignLeft | Qt.AlignVCenter)
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.table.setItem(row_idx, col_idx, item)
 
     def add_path(self):
         folder_path = QFileDialog.getExistingDirectory(self, '添加路径到路径库')
@@ -105,7 +158,7 @@ class PathLibraryWindow(QDialog):
             return
 
         path_id = self.table.item(row, 0).text()
-        path_text = self.table.item(row, 1).text()
+        path_text = self.table.item(row, 2).text()
         confirmed = QMessageBox.question(
             self,
             '确认删除',
@@ -126,11 +179,15 @@ class PathLibraryWindow(QDialog):
             QMessageBox.warning(self, '提示', '请先选择一个路径')
             return
 
-        self.selected_path = self.table.item(row, 1).text()
+        self.selected_path = self.table.item(row, 2).text()
         self.accept()
 
     def current_row(self):
         selected_ranges = self.table.selectedRanges()
         if not selected_ranges:
             return -1
-        return selected_ranges[0].topRow()
+        row = selected_ranges[0].topRow()
+        id_item = self.table.item(row, 0)
+        if not id_item or not id_item.text().isdigit():
+            return -1
+        return row

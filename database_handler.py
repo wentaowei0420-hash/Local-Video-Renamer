@@ -19,9 +19,11 @@ class VideoDatabase:
                     title TEXT,
                     author TEXT,
                     duration TEXT,
-                    size TEXT
+                    size TEXT,
+                    storage_location TEXT
                 )
             ''')
+            self._ensure_column(cursor, 'processed_videos', 'storage_location', 'TEXT')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS actors (
                     name TEXT PRIMARY KEY,
@@ -34,14 +36,32 @@ class VideoDatabase:
                 CREATE TABLE IF NOT EXISTS path_library (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     path TEXT UNIQUE NOT NULL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_total_bytes INTEGER DEFAULT 0,
+                    last_used_bytes INTEGER DEFAULT 0,
+                    last_free_bytes INTEGER DEFAULT 0,
+                    last_usage_percent REAL DEFAULT 0,
+                    last_volume_type TEXT DEFAULT '',
+                    last_checked_at TEXT
                 )
             ''')
+            self._ensure_column(cursor, 'path_library', 'last_total_bytes', 'INTEGER DEFAULT 0')
+            self._ensure_column(cursor, 'path_library', 'last_used_bytes', 'INTEGER DEFAULT 0')
+            self._ensure_column(cursor, 'path_library', 'last_free_bytes', 'INTEGER DEFAULT 0')
+            self._ensure_column(cursor, 'path_library', 'last_usage_percent', 'REAL DEFAULT 0')
+            self._ensure_column(cursor, 'path_library', 'last_volume_type', 'TEXT DEFAULT ""')
+            self._ensure_column(cursor, 'path_library', 'last_checked_at', 'TEXT')
             cursor.executemany(
                 'DELETE FROM actors WHERE lower(name) = ?',
                 [(name,) for name in IGNORED_ACTOR_NAMES],
             )
             conn.commit()
+
+    def _ensure_column(self, cursor, table_name, column_name, column_type):
+        cursor.execute(f'PRAGMA table_info({table_name})')
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column_name not in existing_columns:
+            cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
 
     def save_plans(self, plans):
         """将扫描到的计划列表批量写入/更新到数据库"""
@@ -53,14 +73,15 @@ class VideoDatabase:
             cursor = conn.cursor()
             for plan in plans:
                 cursor.execute('''
-                    REPLACE INTO processed_videos (code, title, author, duration, size)
-                    VALUES (?, ?, ?, ?, ?)
+                    REPLACE INTO processed_videos (code, title, author, duration, size, storage_location)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     plan.metadata.code,
                     plan.metadata.title,
                     plan.metadata.author,
                     plan.metadata.duration,
-                    plan.metadata.size
+                    plan.metadata.size,
+                    plan.storage_location
                 ))
                 success_count += 1
             conn.commit()
@@ -135,14 +156,14 @@ class VideoDatabase:
             if search_text:
                 like_value = f'%{search_text}%'
                 cursor.execute('''
-                    SELECT code, title, author, duration, size
+                    SELECT code, title, author, duration, size, storage_location
                     FROM processed_videos
-                    WHERE code LIKE ? OR title LIKE ? OR author LIKE ?
+                    WHERE code LIKE ? OR title LIKE ? OR author LIKE ? OR storage_location LIKE ?
                     ORDER BY code
-                ''', (like_value, like_value, like_value))
+                ''', (like_value, like_value, like_value, like_value))
             else:
                 cursor.execute('''
-                    SELECT code, title, author, duration, size
+                    SELECT code, title, author, duration, size, storage_location
                     FROM processed_videos
                     ORDER BY code
                 ''')
@@ -154,6 +175,7 @@ class VideoDatabase:
                     'author': row[2] or '',
                     'duration': row[3] or '',
                     'size': row[4] or '',
+                    'storage_location': row[5] or '',
                 }
                 for row in cursor.fetchall()
             ]
@@ -183,7 +205,8 @@ class VideoDatabase:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, path, created_at
+                SELECT id, path, created_at, last_total_bytes, last_used_bytes,
+                       last_free_bytes, last_usage_percent, last_volume_type, last_checked_at
                 FROM path_library
                 ORDER BY created_at DESC, id DESC
             ''')
@@ -193,15 +216,45 @@ class VideoDatabase:
                     'id': row[0],
                     'path': row[1] or '',
                     'created_at': row[2] or '',
+                    'last_total_bytes': row[3] or 0,
+                    'last_used_bytes': row[4] or 0,
+                    'last_free_bytes': row[5] or 0,
+                    'last_usage_percent': row[6] or 0,
+                    'last_volume_type': row[7] or '',
+                    'last_checked_at': row[8] or '',
                 }
                 for row in cursor.fetchall()
             ]
+
+    def update_path_storage_info(self, path_id, storage_info):
+        """保存路径最后一次成功检测到的容量快照。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE path_library
+                SET last_total_bytes = ?,
+                    last_used_bytes = ?,
+                    last_free_bytes = ?,
+                    last_usage_percent = ?,
+                    last_volume_type = ?,
+                    last_checked_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (
+                storage_info.get('total_bytes', 0),
+                storage_info.get('used_bytes', 0),
+                storage_info.get('free_bytes', 0),
+                storage_info.get('usage_percent', 0),
+                storage_info.get('volume_type', ''),
+                path_id,
+            ))
+            conn.commit()
 
     def get_path_by_value(self, folder_path):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, path, created_at
+                SELECT id, path, created_at, last_total_bytes, last_used_bytes,
+                       last_free_bytes, last_usage_percent, last_volume_type, last_checked_at
                 FROM path_library
                 WHERE path = ?
             ''', (folder_path,))
@@ -214,4 +267,10 @@ class VideoDatabase:
             'id': row[0],
             'path': row[1] or '',
             'created_at': row[2] or '',
+            'last_total_bytes': row[3] or 0,
+            'last_used_bytes': row[4] or 0,
+            'last_free_bytes': row[5] or 0,
+            'last_usage_percent': row[6] or 0,
+            'last_volume_type': row[7] or '',
+            'last_checked_at': row[8] or '',
         }

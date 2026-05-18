@@ -78,6 +78,10 @@ PyQt 主界面入口。
 
 职责：
 - 展示保存在数据库中的本地视频路径。
+- 以 U 盘入口风格显示路径状态。
+- 展示路径对应存储卷的总容量、空闲空间、已用空间和使用率。
+- U 盘拔出后，继续显示最后一次成功检测到的容量快照，并标记为未连接。
+- 表格末尾追加合计行，汇总所有路径的总空间、总空闲、总占用和总占用比。
 - 提供添加、删除、刷新和使用选中路径的按钮。
 - 添加路径时通过文件夹选择器获得路径。
 - 使用选中路径后，将路径返回给主界面作为当前扫描目录。
@@ -169,6 +173,7 @@ GUI 使用的 HTTP 客户端。
 - 定义 `VideoMetadata`。
 - 定义 `RenamePlan`。
 - 定义 `RenameResult`。
+- `RenamePlan.storage_location` 保存扫描入口名称，例如 `2号U盘`。
 - 提供模型与 `dict` 的转换函数：
   - `metadata_to_dict()`
   - `metadata_from_dict()`
@@ -209,8 +214,13 @@ GUI 使用的 HTTP 客户端。
 
 职责：
 - 规范化用户选择的本地文件夹路径。
+- 保留用户选择的挂载入口路径显示，例如 `D:\视频库连接入口\2号U盘`，不解析成底层盘符路径。
+- 从扫描入口路径提取存放位置名称，例如 `D:\视频库连接入口\2号U盘` 提取为 `2号U盘`。
 - 校验路径是否存在且是否为文件夹。
 - 给数据库路径记录补充当前是否可用的状态。
+- 检测路径所在存储卷的容量、空闲空间、已用空间和使用率。
+- 在 Windows 上尽量识别卷类型，例如 U 盘/可移动盘、本地磁盘等。
+- 在线时刷新容量快照；离线时返回数据库保存的最后一次容量快照。
 
 路径库只保存本地路径文本，不复制或移动视频文件。
 
@@ -306,6 +316,7 @@ Local_Video_gui.py
   -> POST /database/save
   -> BackendService.save_plans()
   -> VideoDatabase.save_plans()
+  -> 将 RenamePlan.storage_location 写入 processed_videos.storage_location
   -> ActorIdentifier.identify_from_plans()
   -> VideoDatabase.save_actors()
   -> SQLite REPLACE INTO processed_videos

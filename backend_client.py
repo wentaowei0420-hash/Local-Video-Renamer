@@ -35,8 +35,11 @@ class BackendClient:
             query = '?' + urlencode({'q': search_text})
         return self._get('/database/actors' + query).get('actors', [])
 
+    def get_path_library(self):
+        return self._get('/paths')
+
     def list_paths(self):
-        return self._get('/paths').get('paths', [])
+        return self.get_path_library().get('paths', [])
 
     def add_path(self, folder_path):
         return self._post('/paths/add', {'folder_path': folder_path}).get('path')

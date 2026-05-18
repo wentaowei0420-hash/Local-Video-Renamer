@@ -16,6 +16,7 @@ class RenamePlan:
     old_path: Path
     new_path: Path
     metadata: VideoMetadata
+    storage_location: str = ''
 
     @property
     def old_name(self):
@@ -65,6 +66,7 @@ def plan_to_dict(plan):
         'old_name': plan.old_name,
         'new_name': plan.new_name,
         'needs_rename': plan.needs_rename,
+        'storage_location': plan.storage_location,
         'metadata': metadata_to_dict(plan.metadata),
     }
 
@@ -74,6 +76,7 @@ def plan_from_dict(data):
         old_path=Path(data['old_path']),
         new_path=Path(data['new_path']),
         metadata=metadata_from_dict(data.get('metadata', {})),
+        storage_location=data.get('storage_location', ''),
     )
 
 
