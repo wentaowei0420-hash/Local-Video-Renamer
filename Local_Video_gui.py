@@ -18,14 +18,19 @@ from PyQt5.QtWidgets import (
 )
 
 from video_renamer_api import VideoRenamerAPI
+from database_handler import VideoDatabase
+# 👇 导入我们刚刚新建的数据库查看器窗口
+from db_viewer import DatabaseViewerWindow
 
 
 class VidNormApp(QWidget):
     def __init__(self):
         super().__init__()
         self.pending_renames = []
+
         self.csv_path = Path(__file__).with_name('目录统计 - 详细介绍.csv')
         self.api = VideoRenamerAPI(self.csv_path)
+        self.db = VideoDatabase()
 
         self.load_csv_data()
         self.init_ui()
@@ -60,21 +65,26 @@ class VidNormApp(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         bottom_layout = QHBoxLayout()
+
+        # 👇 新增：查看数据库按钮 (它随时可用，独立于扫描流程)
+        self.btn_view_db = QPushButton('📊 查看数据库')
+        self.btn_view_db.clicked.connect(self.show_db_viewer)
+
         self.btn_scan = QPushButton('🔍 扫描并匹配 CSV')
         self.btn_scan.clicked.connect(self.scan_files)
 
-        # ================= 新增：写入数据库按钮 =================
         self.btn_write_db = QPushButton('💾 写入数据库')
         self.btn_write_db.clicked.connect(self.write_to_db)
-        self.btn_write_db.setEnabled(False)  # 初始不可用
+        self.btn_write_db.setEnabled(False)
 
         self.btn_execute = QPushButton('🚀 执行重命名')
         self.btn_execute.clicked.connect(self.execute_rename)
         self.btn_execute.setEnabled(False)
 
+        bottom_layout.addWidget(self.btn_view_db)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.btn_scan)
-        bottom_layout.addWidget(self.btn_write_db)  # 将按钮加入布局
+        bottom_layout.addWidget(self.btn_write_db)
         bottom_layout.addWidget(self.btn_execute)
 
         main_layout.addLayout(top_layout)
@@ -89,7 +99,7 @@ class VidNormApp(QWidget):
             self.table.setRowCount(0)
             self.pending_renames.clear()
             self.btn_execute.setEnabled(False)
-            self.btn_write_db.setEnabled(False)  # 切换文件夹时置灰
+            self.btn_write_db.setEnabled(False)
 
     def scan_files(self):
         folder_path = self.path_input.text()
@@ -121,9 +131,7 @@ class VidNormApp(QWidget):
 
             self.table.setItem(row, 2, status_item)
 
-        # 控制按钮状态
         self.btn_execute.setEnabled(has_files_to_rename)
-        # 只要扫描出了视频，不管需不需要改名，都可以执行“写入数据库”
         self.btn_write_db.setEnabled(len(self.pending_renames) > 0)
 
         QMessageBox.information(
@@ -132,17 +140,16 @@ class VidNormApp(QWidget):
             f"共识别到 {len(self.pending_renames)} 个视频，其中有待重命名视频。" if has_files_to_rename else f"共识别到 {len(self.pending_renames)} 个视频，全部符合规范！",
         )
 
-    # ================= 新增：写入数据库的执行动作 =================
     def write_to_db(self):
         if not self.pending_renames:
             return
 
         try:
-            self.api.save_plans_to_db(self.pending_renames)
+            success_count = self.db.save_plans(self.pending_renames)
             QMessageBox.information(
                 self,
                 "写入成功",
-                f"成功将当前列表中的 {len(self.pending_renames)} 个视频数据写入/更新至数据库！\n(已根据视频编号自动覆盖去重)"
+                f"成功将当前列表中的 {success_count} 个视频数据写入/更新至数据库！\n(已根据视频编号自动覆盖去重)"
             )
         except Exception as exc:
             QMessageBox.critical(self, "错误", f"写入数据库失败：\n{str(exc)}")
@@ -161,6 +168,12 @@ class VidNormApp(QWidget):
 
         QMessageBox.information(self, "结果", f"成功重命名 {success} 个文件。")
         self.btn_execute.setEnabled(False)
+
+    # 👇 新增：弹出独立数据库查看器的方法
+    def show_db_viewer(self):
+        # 实例化查看器窗口，并将主窗体的数据库路径传递给它
+        viewer = DatabaseViewerWindow(db_path=self.db.db_path, parent=self)
+        viewer.exec_()  # 弹出对话框
 
 
 if __name__ == '__main__':
