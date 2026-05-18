@@ -12,7 +12,7 @@ PyQt GUI
   -> http://127.0.0.1:8765
   -> backend_server.py
   -> backend_service.py
-  -> video_renamer_api.py / actor_identifier.py / database_handler.py
+  -> video_renamer_api.py / actor_identifier.py / path_library.py / database_handler.py
   -> CSV / SQLite DB / 本地文件系统
 ```
 
@@ -23,6 +23,7 @@ PyQt GUI
 - 业务协调层负责组织扫描、重命名、数据库保存等流程。
 - 独立规则放独立模块，例如文件名清洗、CSV 加载、数据模型。
 - 演员识别独立放在 `actor_identifier.py`，不要混进 GUI 或数据库查询页面。
+- 路径库业务独立放在 `path_library.py`，GUI 只负责展示、添加、删除和选择。
 - `.csv` 和 `.db` 是个人本地数据，不应提交到 Git。
 
 ## 模块职责
@@ -71,6 +72,20 @@ PyQt 主界面入口。
 - 演员统计 CSV 读取逻辑。
 - SQLite 连接逻辑。
 
+### `path_library_viewer.py`
+
+路径库查看与选择窗口。
+
+职责：
+- 展示保存在数据库中的本地视频路径。
+- 提供添加、删除、刷新和使用选中路径的按钮。
+- 添加路径时通过文件夹选择器获得路径。
+- 使用选中路径后，将路径返回给主界面作为当前扫描目录。
+
+不应放入：
+- 数据库写入 SQL。
+- 路径规范化和存在性校验规则。
+
 ### `backend_client.py`
 
 GUI 使用的 HTTP 客户端。
@@ -100,6 +115,9 @@ GUI 使用的 HTTP 客户端。
 - `POST /database/save`
 - `GET /database/videos?q=关键词`
 - `GET /database/actors?q=关键词`
+- `GET /paths`
+- `POST /paths/add`
+- `POST /paths/delete`
 
 不应放入：
 - 文件名清洗规则。
@@ -122,6 +140,7 @@ GUI 使用的 HTTP 客户端。
 - 查询 SQLite 台账。
 - 识别扫描结果中的单个作者并写入作者表。
 - 查询作者库。
+- 添加、删除和查询路径库。
 - 将业务对象转换为 JSON 可返回的数据。
 
 如果要新增一个后端业务接口，通常先从这里加方法，再到 `backend_server.py` 增加路由。
@@ -184,6 +203,17 @@ GUI 使用的 HTTP 客户端。
 新村あかり
 ```
 
+### `path_library.py`
+
+路径库业务规则模块。
+
+职责：
+- 规范化用户选择的本地文件夹路径。
+- 校验路径是否存在且是否为文件夹。
+- 给数据库路径记录补充当前是否可用的状态。
+
+路径库只保存本地路径文本，不复制或移动视频文件。
+
 ### `filename_rules.py`
 
 文件名解析、清洗和生成规则。
@@ -232,10 +262,12 @@ SQLite 台账访问模块。
 职责：
 - 初始化 `processed_videos` 表。
 - 初始化 `actors` 表。
+- 初始化 `path_library` 表。
 - 批量保存扫描结果。
 - 批量保存识别出的作者。
 - 查询已保存的视频台账。
 - 查询已保存的作者库。
+- 添加、删除和查询路径库。
 
 这是系统唯一的数据库模块。不要恢复或新增功能重复的 `database.py`。
 
@@ -317,6 +349,34 @@ Local_Video_gui.py
   -> GUI 表格渲染作者、生日、年龄
 ```
 
+### 路径库流程
+
+```text
+用户点击“路径库”
+  -> PathLibraryWindow
+  -> BackendClient.list_paths()
+  -> GET /paths
+  -> BackendService.list_paths()
+  -> VideoDatabase.list_paths()
+  -> GUI 表格渲染已保存路径
+
+用户点击“添加”
+  -> QFileDialog 选择文件夹
+  -> BackendClient.add_path(folder_path)
+  -> POST /paths/add
+  -> PathLibrary.build_path_record()
+  -> VideoDatabase.add_path()
+
+用户点击“删除”
+  -> BackendClient.delete_path(path_id)
+  -> POST /paths/delete
+  -> VideoDatabase.delete_path()
+
+用户点击“使用选中路径”
+  -> PathLibraryWindow.selected_path
+  -> Local_Video_gui.set_current_folder()
+```
+
 ## 本地个人数据
 
 以下文件类型属于个人本地数据，已经在 `.gitignore` 中忽略：
@@ -353,6 +413,13 @@ actor_identifier.py
 database_handler.py
 ```
 
+新增或修改路径库业务：
+
+```text
+path_library.py
+database_handler.py
+```
+
 新增后端接口：
 
 ```text
@@ -386,6 +453,12 @@ db_viewer.py
 actor_viewer.py
 ```
 
+修改路径库查看窗口：
+
+```text
+path_library_viewer.py
+```
+
 ## 不建议的改法
 
 - 不要在 GUI 里直接 `sqlite3.connect()`。
@@ -395,13 +468,14 @@ actor_viewer.py
 - 不要提交 `.csv` 或 `.db` 文件。
 - 不要在多个模块里复制文件名清洗正则，统一使用 `filename_rules.py`。
 - 不要在 GUI 或作者库页面里拆分作者字符串，统一使用 `actor_identifier.py`。
+- 不要在路径库页面里直接写 SQL，统一通过后端和 `path_library.py`。
 
 ## 快速验证命令
 
 编译检查：
 
 ```powershell
-python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\filename_rules.py .\video_models.py .\video_renamer_api.py
+python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\filename_rules.py .\path_library.py .\path_library_viewer.py .\video_models.py .\video_renamer_api.py
 ```
 
 后端手动启动：
@@ -422,6 +496,7 @@ http://127.0.0.1:8765/health
 Local_Video_gui.py      GUI 主窗口
 db_viewer.py            数据库查看窗口
 actor_viewer.py         作者库查看窗口
+path_library_viewer.py  路径库查看与选择窗口
 backend_client.py       GUI 到后端的 HTTP 客户端
 backend_server.py       本地 HTTP 服务入口和路由
 backend_service.py      后端业务协调层
@@ -430,5 +505,6 @@ video_models.py         业务数据模型与 JSON 转换
 filename_rules.py       文件名规则与标题清洗
 csv_video_loader.py     CSV 元数据加载
 actor_identifier.py     作者识别与演员统计 CSV 关联
+path_library.py         路径库业务规则
 database_handler.py     SQLite 台账访问
 ```

@@ -35,6 +35,15 @@ class BackendClient:
             query = '?' + urlencode({'q': search_text})
         return self._get('/database/actors' + query).get('actors', [])
 
+    def list_paths(self):
+        return self._get('/paths').get('paths', [])
+
+    def add_path(self, folder_path):
+        return self._post('/paths/add', {'folder_path': folder_path}).get('path')
+
+    def delete_path(self, path_id):
+        return self._post('/paths/delete', {'path_id': path_id}).get('deleted_count', 0)
+
     def _get(self, path):
         response = requests.get(self.base_url + path, timeout=self.timeout)
         return self._parse_response(response)

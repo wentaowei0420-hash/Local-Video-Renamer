@@ -30,6 +30,13 @@ class VideoDatabase:
                     matched INTEGER DEFAULT 0
                 )
             ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS path_library (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT UNIQUE NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             cursor.executemany(
                 'DELETE FROM actors WHERE lower(name) = ?',
                 [(name,) for name in IGNORED_ACTOR_NAMES],
@@ -150,3 +157,61 @@ class VideoDatabase:
                 }
                 for row in cursor.fetchall()
             ]
+
+    def add_path(self, folder_path):
+        """写入一个路径库记录，已存在时保持一条记录。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO path_library (path)
+                VALUES (?)
+            ''', (folder_path,))
+            conn.commit()
+
+        return self.get_path_by_value(folder_path)
+
+    def delete_path(self, path_id):
+        """按 id 删除路径库记录。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM path_library WHERE id = ?', (path_id,))
+            conn.commit()
+            return cursor.rowcount
+
+    def list_paths(self):
+        """读取路径库。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, path, created_at
+                FROM path_library
+                ORDER BY created_at DESC, id DESC
+            ''')
+
+            return [
+                {
+                    'id': row[0],
+                    'path': row[1] or '',
+                    'created_at': row[2] or '',
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def get_path_by_value(self, folder_path):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, path, created_at
+                FROM path_library
+                WHERE path = ?
+            ''', (folder_path,))
+            row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'id': row[0],
+            'path': row[1] or '',
+            'created_at': row[2] or '',
+        }

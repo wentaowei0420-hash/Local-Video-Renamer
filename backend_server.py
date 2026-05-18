@@ -56,6 +56,15 @@ def make_handler(service):
             if method == 'GET' and path == '/database/actors':
                 search_text = query.get('q', [''])[0]
                 return service.list_actors(search_text)
+            if method == 'GET' and path == '/paths':
+                return service.list_paths()
+            if method == 'POST' and path == '/paths/add':
+                folder_path = body.get('folder_path')
+                if not folder_path:
+                    raise ValueError('缺少 folder_path')
+                return service.add_path(folder_path)
+            if method == 'POST' and path == '/paths/delete':
+                return service.delete_path(body.get('path_id'))
 
             raise ValueError(f'未知接口: {method} {path}')
 

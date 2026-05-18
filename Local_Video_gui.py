@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 from backend_client import BackendClient
 from actor_viewer import ActorViewerWindow
 from db_viewer import DatabaseViewerWindow
+from path_library_viewer import PathLibraryWindow
 
 
 class VidNormApp(QWidget):
@@ -82,8 +83,11 @@ class VidNormApp(QWidget):
         self.path_input.setReadOnly(True)
         btn_browse = QPushButton('📁 选择文件夹')
         btn_browse.clicked.connect(self.browse_folder)
+        btn_path_library = QPushButton('📚 路径库')
+        btn_path_library.clicked.connect(self.show_path_library)
         top_layout.addWidget(QLabel("本地目录:"))
         top_layout.addWidget(self.path_input)
+        top_layout.addWidget(btn_path_library)
         top_layout.addWidget(btn_browse)
 
         self.table = QTableWidget()
@@ -128,11 +132,14 @@ class VidNormApp(QWidget):
     def browse_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if folder_path:
-            self.path_input.setText(folder_path)
-            self.table.setRowCount(0)
-            self.pending_renames.clear()
-            self.btn_execute.setEnabled(False)
-            self.btn_write_db.setEnabled(False)
+            self.set_current_folder(folder_path)
+
+    def set_current_folder(self, folder_path):
+        self.path_input.setText(folder_path)
+        self.table.setRowCount(0)
+        self.pending_renames.clear()
+        self.btn_execute.setEnabled(False)
+        self.btn_write_db.setEnabled(False)
 
     def scan_files(self):
         folder_path = self.path_input.text()
@@ -219,6 +226,11 @@ class VidNormApp(QWidget):
     def show_actor_viewer(self):
         viewer = ActorViewerWindow(backend_client=self.backend_client, parent=self)
         viewer.exec_()
+
+    def show_path_library(self):
+        viewer = PathLibraryWindow(backend_client=self.backend_client, parent=self)
+        if viewer.exec_() and viewer.selected_path:
+            self.set_current_folder(viewer.selected_path)
 
     def closeEvent(self, event):
         if self.backend_process and self.backend_process.poll() is None:
