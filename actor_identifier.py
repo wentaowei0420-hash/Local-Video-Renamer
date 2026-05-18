@@ -5,6 +5,9 @@ from pathlib import Path
 from filename_rules import normalize_text_spacing
 
 
+IGNORED_ACTOR_NAMES = {'无', '暂无', '未知', '无记录', 'none', 'null', 'n/a', 'na', '-'}
+
+
 class ActorIdentifier:
     def __init__(self, actor_csv_path):
         self.actor_csv_path = Path(actor_csv_path)
@@ -64,7 +67,7 @@ def load_actor_profiles(actor_csv_path):
         reader = csv.DictReader(f)
         for row in reader:
             name = normalize_actor_name(row.get('主角', ''))
-            if not name:
+            if not name or is_ignored_actor_name(name):
                 continue
 
             profiles[name] = {
@@ -74,7 +77,7 @@ def load_actor_profiles(actor_csv_path):
             }
 
             alias = normalize_actor_name(row.get('类型', ''))
-            if alias and alias not in profiles:
+            if alias and not is_ignored_actor_name(alias) and alias not in profiles:
                 profiles[alias] = profiles[name]
 
     return profiles
@@ -90,9 +93,13 @@ def split_actor_names(author_text):
     return [
         name
         for name in (normalize_actor_name(raw_name) for raw_name in raw_names)
-        if name
+        if name and not is_ignored_actor_name(name)
     ]
 
 
 def normalize_actor_name(name):
     return normalize_text_spacing(name).strip('　 \t\r\n')
+
+
+def is_ignored_actor_name(name):
+    return normalize_actor_name(name).lower() in IGNORED_ACTOR_NAMES

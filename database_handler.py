@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+from actor_identifier import IGNORED_ACTOR_NAMES, is_ignored_actor_name
+
 
 class VideoDatabase:
     def __init__(self, db_path='video_database.db'):
@@ -28,6 +30,10 @@ class VideoDatabase:
                     matched INTEGER DEFAULT 0
                 )
             ''')
+            cursor.executemany(
+                'DELETE FROM actors WHERE lower(name) = ?',
+                [(name,) for name in IGNORED_ACTOR_NAMES],
+            )
             conn.commit()
 
     def save_plans(self, plans):
@@ -64,7 +70,7 @@ class VideoDatabase:
             cursor = conn.cursor()
             for actor in actors:
                 name = actor.get('name', '').strip()
-                if not name:
+                if not name or is_ignored_actor_name(name):
                     continue
 
                 cursor.execute('''
@@ -110,6 +116,7 @@ class VideoDatabase:
                     'matched': bool(row[3]),
                 }
                 for row in cursor.fetchall()
+                if not is_ignored_actor_name(row[0] or '')
             ]
 
     def list_videos(self, search_text=''):
