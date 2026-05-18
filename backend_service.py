@@ -3,6 +3,7 @@ from pathlib import Path
 from actor_identifier import ActorIdentifier
 from database_handler import VideoDatabase
 from path_library import PathLibrary, summarize_paths
+from video_enrichment import VideoEnrichmentService
 from video_models import plan_from_dict, plan_to_dict, result_to_dict
 from video_renamer_api import VideoRenamerAPI
 
@@ -105,3 +106,7 @@ class BackendService:
             raise ValueError('缺少 path_id')
 
         return {'deleted_count': self.db.delete_path(path_id)}
+
+    def enrich_videos(self, limit):
+        enrichment_service = VideoEnrichmentService(self.db)
+        return enrichment_service.enrich_next_videos(limit)

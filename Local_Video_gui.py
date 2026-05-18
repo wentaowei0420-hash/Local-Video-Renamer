@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QInputDialog,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -113,6 +114,9 @@ class VidNormApp(QWidget):
         self.btn_write_db.clicked.connect(self.write_to_db)
         self.btn_write_db.setEnabled(False)
 
+        self.btn_enrich = QPushButton('🌐 补全信息')
+        self.btn_enrich.clicked.connect(self.enrich_video_info)
+
         self.btn_execute = QPushButton('🚀 执行重命名')
         self.btn_execute.clicked.connect(self.execute_rename)
         self.btn_execute.setEnabled(False)
@@ -122,6 +126,7 @@ class VidNormApp(QWidget):
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.btn_scan)
         bottom_layout.addWidget(self.btn_write_db)
+        bottom_layout.addWidget(self.btn_enrich)
         bottom_layout.addWidget(self.btn_execute)
 
         main_layout.addLayout(top_layout)
@@ -217,6 +222,35 @@ class VidNormApp(QWidget):
 
         QMessageBox.information(self, "结果", f"成功重命名 {success} 个文件。")
         self.btn_execute.setEnabled(False)
+
+    def enrich_video_info(self):
+        limit, ok = QInputDialog.getInt(
+            self,
+            "补全信息",
+            "本次补全多少个未补全视频？",
+            5,
+            1,
+            100,
+            1,
+        )
+        if not ok:
+            return
+
+        self.btn_enrich.setEnabled(False)
+        try:
+            result = self.backend_client.enrich_videos(limit)
+            QMessageBox.information(
+                self,
+                "补全完成",
+                f"本次处理 {result.get('processed_count', 0)} 个视频。\n"
+                f"成功：{result.get('success_count', 0)} 个\n"
+                f"失败：{result.get('failed_count', 0)} 个\n"
+                f"剩余未补全：{result.get('remaining_count', 0)} 个"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "补全失败", str(exc))
+        finally:
+            self.btn_enrich.setEnabled(True)
 
     # 👇 新增：弹出独立数据库查看器的方法
     def show_db_viewer(self):

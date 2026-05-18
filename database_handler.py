@@ -4,6 +4,12 @@ from pathlib import Path
 from actor_identifier import IGNORED_ACTOR_NAMES, is_ignored_actor_name
 
 
+def join_values(value):
+    if isinstance(value, (list, tuple)):
+        return ' '.join(str(item) for item in value if str(item).strip())
+    return str(value or '')
+
+
 class VideoDatabase:
     def __init__(self, db_path='video_database.db'):
         self.db_path = Path(db_path)
@@ -20,10 +26,29 @@ class VideoDatabase:
                     author TEXT,
                     duration TEXT,
                     size TEXT,
-                    storage_location TEXT
+                    storage_location TEXT,
+                    avfan_movie_id TEXT,
+                    release_date TEXT,
+                    maker TEXT,
+                    publisher TEXT,
+                    enrichment_status TEXT DEFAULT '未补全',
+                    enrichment_error TEXT,
+                    enriched_at TEXT
                 )
             ''')
             self._ensure_column(cursor, 'processed_videos', 'storage_location', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'avfan_movie_id', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'release_date', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'maker', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'publisher', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'enrichment_status', "TEXT DEFAULT '未补全'")
+            self._ensure_column(cursor, 'processed_videos', 'enrichment_error', 'TEXT')
+            self._ensure_column(cursor, 'processed_videos', 'enriched_at', 'TEXT')
+            cursor.execute('''
+                UPDATE processed_videos
+                SET enrichment_status = '未补全'
+                WHERE enrichment_status IS NULL OR enrichment_status = ''
+            ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS actors (
                     name TEXT PRIMARY KEY,
@@ -73,8 +98,17 @@ class VideoDatabase:
             cursor = conn.cursor()
             for plan in plans:
                 cursor.execute('''
-                    REPLACE INTO processed_videos (code, title, author, duration, size, storage_location)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO processed_videos (
+                        code, title, author, duration, size, storage_location, enrichment_status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, '未补全')
+                    ON CONFLICT(code) DO UPDATE SET
+                        title = excluded.title,
+                        author = excluded.author,
+                        duration = excluded.duration,
+                        size = excluded.size,
+                        storage_location = excluded.storage_location,
+                        enrichment_status = COALESCE(NULLIF(processed_videos.enrichment_status, ''), '未补全')
                 ''', (
                     plan.metadata.code,
                     plan.metadata.title,
@@ -156,14 +190,21 @@ class VideoDatabase:
             if search_text:
                 like_value = f'%{search_text}%'
                 cursor.execute('''
-                    SELECT code, title, author, duration, size, storage_location
+                    SELECT code, title, author, duration, size, storage_location,
+                           avfan_movie_id, release_date, maker, publisher, enrichment_status
                     FROM processed_videos
                     WHERE code LIKE ? OR title LIKE ? OR author LIKE ? OR storage_location LIKE ?
+                       OR avfan_movie_id LIKE ? OR release_date LIKE ? OR maker LIKE ? OR publisher LIKE ?
+                       OR enrichment_status LIKE ?
                     ORDER BY code
-                ''', (like_value, like_value, like_value, like_value))
+                ''', (
+                    like_value, like_value, like_value, like_value, like_value,
+                    like_value, like_value, like_value, like_value,
+                ))
             else:
                 cursor.execute('''
-                    SELECT code, title, author, duration, size, storage_location
+                    SELECT code, title, author, duration, size, storage_location,
+                           avfan_movie_id, release_date, maker, publisher, enrichment_status
                     FROM processed_videos
                     ORDER BY code
                 ''')
@@ -176,9 +217,82 @@ class VideoDatabase:
                     'duration': row[3] or '',
                     'size': row[4] or '',
                     'storage_location': row[5] or '',
+                    'avfan_movie_id': row[6] or '',
+                    'release_date': row[7] or '',
+                    'maker': row[8] or '',
+                    'publisher': row[9] or '',
+                    'enrichment_status': row[10] or '未补全',
                 }
                 for row in cursor.fetchall()
             ]
+
+    def list_videos_for_enrichment(self, limit):
+        """读取需要补全的未补全视频。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT code, title, author
+                FROM processed_videos
+                WHERE COALESCE(enrichment_status, '未补全') != '已补全'
+                ORDER BY code
+                LIMIT ?
+            ''', (int(limit),))
+
+            return [
+                {
+                    'code': row[0] or '',
+                    'title': row[1] or '',
+                    'author': row[2] or '',
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def update_video_enrichment(self, code, info, status='已补全'):
+        """写入网页补全信息。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE processed_videos
+                SET avfan_movie_id = ?,
+                    release_date = ?,
+                    maker = ?,
+                    publisher = ?,
+                    enrichment_status = ?,
+                    enrichment_error = ?,
+                    enriched_at = CURRENT_TIMESTAMP
+                WHERE code = ?
+            ''', (
+                info.get('avfan_movie_id', ''),
+                info.get('release_date', ''),
+                join_values(info.get('maker')),
+                join_values(info.get('publisher')),
+                status,
+                info.get('error', ''),
+                code,
+            ))
+            conn.commit()
+
+    def mark_video_enrichment_failed(self, code, error):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE processed_videos
+                SET enrichment_status = '补全失败',
+                    enrichment_error = ?,
+                    enriched_at = CURRENT_TIMESTAMP
+                WHERE code = ?
+            ''', (error, code))
+            conn.commit()
+
+    def count_videos_by_enrichment_status(self, status):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*)
+                FROM processed_videos
+                WHERE COALESCE(enrichment_status, '未补全') = ?
+            ''', (status,))
+            return int(cursor.fetchone()[0] or 0)
 
     def add_path(self, folder_path):
         """写入一个路径库记录，已存在时保持一条记录。"""

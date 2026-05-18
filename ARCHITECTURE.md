@@ -12,7 +12,7 @@ PyQt GUI
   -> http://127.0.0.1:8765
   -> backend_server.py
   -> backend_service.py
-  -> video_renamer_api.py / actor_identifier.py / path_library.py / database_handler.py
+  -> video_renamer_api.py / actor_identifier.py / path_library.py / avfan_scraper.py / database_handler.py
   -> CSV / SQLite DB / 本地文件系统
 ```
 
@@ -24,6 +24,7 @@ PyQt GUI
 - 独立规则放独立模块，例如文件名清洗、CSV 加载、数据模型。
 - 演员识别独立放在 `actor_identifier.py`，不要混进 GUI 或数据库查询页面。
 - 路径库业务独立放在 `path_library.py`，GUI 只负责展示、添加、删除和选择。
+- AVFan 网页抓取独立放在 `avfan_scraper.py`，补全批处理独立放在 `video_enrichment.py`。
 - `.csv` 和 `.db` 是个人本地数据，不应提交到 Git。
 
 ## 模块职责
@@ -122,6 +123,7 @@ GUI 使用的 HTTP 客户端。
 - `GET /paths`
 - `POST /paths/add`
 - `POST /paths/delete`
+- `POST /database/enrich`
 
 不应放入：
 - 文件名清洗规则。
@@ -143,8 +145,9 @@ GUI 使用的 HTTP 客户端。
 - 保存扫描结果到 SQLite。
 - 查询 SQLite 台账。
 - 识别扫描结果中的单个作者并写入作者表。
-- 查询作者库。
-- 添加、删除和查询路径库。
+  - 查询作者库。
+  - 添加、删除和查询路径库。
+  - 批量补全未补全视频的 AVFan 详情信息。
 - 将业务对象转换为 JSON 可返回的数据。
 
 如果要新增一个后端业务接口，通常先从这里加方法，再到 `backend_server.py` 增加路由。
@@ -224,6 +227,32 @@ GUI 使用的 HTTP 客户端。
 
 路径库只保存本地路径文本，不复制或移动视频文件。
 
+### `avfan_scraper.py`
+
+AVFan 网页抓取模块。
+
+职责：
+- 使用 Playwright 打开 AVFan 首页。
+- 处理成年确认弹窗。
+- 在首页搜索框输入视频编号并点击搜索。
+- 打开搜索结果详情页。
+- 解析 `视频ID`、`发行日期`、`制作商`、`发行商` 等详情字段。
+
+不应放入：
+- 数据库写入逻辑。
+- GUI 弹窗逻辑。
+- 批量补全调度逻辑。
+
+### `video_enrichment.py`
+
+视频信息补全业务模块。
+
+职责：
+- 从数据库读取指定数量的未补全视频。
+- 逐个调用 `AvfanScraper` 根据视频编号补全信息。
+- 将成功结果写回数据库并标记为 `已补全`。
+- 将失败结果标记为 `补全失败`，保留错误信息。
+
 ### `filename_rules.py`
 
 文件名解析、清洗和生成规则。
@@ -274,6 +303,7 @@ SQLite 台账访问模块。
 - 初始化 `actors` 表。
 - 初始化 `path_library` 表。
 - 批量保存扫描结果。
+- 保存 AVFan 补全字段：`视频ID`、`发行日期`、`制作商`、`发行商`、`补全状态`。
 - 批量保存识别出的作者。
 - 查询已保存的视频台账。
 - 查询已保存的作者库。
@@ -388,6 +418,21 @@ Local_Video_gui.py
   -> Local_Video_gui.set_current_folder()
 ```
 
+### 补全信息流程
+
+```text
+用户点击“补全信息”
+  -> 输入本次补全数量
+  -> BackendClient.enrich_videos(limit)
+  -> POST /database/enrich
+  -> BackendService.enrich_videos()
+  -> VideoEnrichmentService.enrich_next_videos()
+  -> VideoDatabase.list_videos_for_enrichment(limit)
+  -> AvfanScraper.fetch_by_code(code)
+  -> VideoDatabase.update_video_enrichment()
+  -> processed_videos 标记为“已补全”或“补全失败”
+```
+
 ## 本地个人数据
 
 以下文件类型属于个人本地数据，已经在 `.gitignore` 中忽略：
@@ -428,6 +473,14 @@ database_handler.py
 
 ```text
 path_library.py
+database_handler.py
+```
+
+新增或修改网页补全业务：
+
+```text
+avfan_scraper.py
+video_enrichment.py
 database_handler.py
 ```
 
@@ -480,13 +533,14 @@ path_library_viewer.py
 - 不要在多个模块里复制文件名清洗正则，统一使用 `filename_rules.py`。
 - 不要在 GUI 或作者库页面里拆分作者字符串，统一使用 `actor_identifier.py`。
 - 不要在路径库页面里直接写 SQL，统一通过后端和 `path_library.py`。
+- 不要恢复 `playwright_avfan_demo.py` 或 `playwright_avfan_search_demo.py`，正式抓取统一使用 `avfan_scraper.py`。
 
 ## 快速验证命令
 
 编译检查：
 
 ```powershell
-python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\filename_rules.py .\path_library.py .\path_library_viewer.py .\video_models.py .\video_renamer_api.py
+python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\avfan_scraper.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\filename_rules.py .\path_library.py .\path_library_viewer.py .\video_enrichment.py .\video_models.py .\video_renamer_api.py
 ```
 
 后端手动启动：
@@ -517,5 +571,7 @@ filename_rules.py       文件名规则与标题清洗
 csv_video_loader.py     CSV 元数据加载
 actor_identifier.py     作者识别与演员统计 CSV 关联
 path_library.py         路径库业务规则
+avfan_scraper.py        AVFan Playwright 网页抓取
+video_enrichment.py     视频信息批量补全业务
 database_handler.py     SQLite 台账访问
 ```

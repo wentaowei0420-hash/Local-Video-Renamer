@@ -23,6 +23,9 @@ class BackendClient:
     def save_plans(self, plans):
         return self._post('/database/save', {'plans': plans})
 
+    def enrich_videos(self, limit):
+        return self._post('/database/enrich', {'limit': limit})
+
     def list_videos(self, search_text=''):
         query = ''
         if search_text:
