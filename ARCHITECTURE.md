@@ -26,6 +26,8 @@ PyQt GUI
 - 路径库业务独立放在 `path_library.py`，GUI 只负责展示、添加、删除和选择。
 - AVFan 网页抓取独立放在 `avfan_scraper.py`，补全批处理独立放在 `video_enrichment.py`。
 - `.csv` 和 `.db` 是个人本地数据，不应提交到 Git。
+- `.env` 保存本地网页访问配置，也不应提交到 Git。
+- `browser_profiles/` 保存网页登录状态、Cookie 等个人敏感数据，也不应提交到 Git。
 
 ## 模块职责
 
@@ -37,6 +39,7 @@ PyQt 主界面入口。
 - 创建主窗口、按钮、路径输入框和扫描结果表格。
 - 启动时检查本地后端是否可用，不可用则自动拉起 `backend_server.py`。
 - 用户点击按钮后，通过 `BackendClient` 调用后端接口。
+- 提供“重置网页登录”按钮，用于清理 AVFan 专用浏览器登录档案。
 - 将后端返回的 JSON 数据渲染到表格。
 
 不应放入：
@@ -80,6 +83,7 @@ PyQt 主界面入口。
 职责：
 - 让用户输入本次补全的视频数量。
 - 提供“显示浏览器窗口”复选框，用于调试 Playwright 抓取流程。
+- 提供“冷却 3 分钟后再搜索”复选框，用于进入 AVFan 页面后延迟搜索第一个编号。
 - 将设置返回给 `Local_Video_gui.py`，再由 GUI 发送给后端。
 
 ### `path_library_viewer.py`
@@ -133,6 +137,7 @@ GUI 使用的 HTTP 客户端。
 - `POST /paths/add`
 - `POST /paths/delete`
 - `POST /database/enrich`
+- `POST /browser-profile/reset`
 
 不应放入：
 - 文件名清洗规则。
@@ -160,6 +165,15 @@ GUI 使用的 HTTP 客户端。
 - 将业务对象转换为 JSON 可返回的数据。
 
 如果要新增一个后端业务接口，通常先从这里加方法，再到 `backend_server.py` 增加路由。
+
+### `app_config.py`
+
+本地配置读取模块。
+
+职责：
+- 读取项目根目录的 `.env`。
+- 提供 `get_setting()` 给业务模块读取本地配置。
+- 将访问网页这类个人配置从主程序代码中剥离出去。
 
 ### `video_renamer_api.py`
 
@@ -241,8 +255,16 @@ GUI 使用的 HTTP 客户端。
 AVFan 网页抓取模块。
 
 职责：
+- 从 `.env` 读取 `SCRAPER_HOME_URL`，不在主程序中硬编码目标网页。
 - 使用 Playwright 打开 AVFan 首页。
+- 优先使用系统 Google Chrome 启动持久化上下文；如果不可用，则回退到 Playwright Chromium。
 - 根据补全设置决定是否显示浏览器窗口；默认后台运行，勾选后使用可见浏览器运行。
+- 使用 `browser_profiles/avfan` 作为 Playwright 专用持久化登录档案，复用登录 Cookie 和本地存储。
+- 批量补全时复用同一个浏览器会话与页面，优先在当前详情页直接搜索下一个编号，而不是每个视频重新打开浏览器。
+- 如果遇到 Cloudflare 真人验证，可见浏览器模式会等待用户手动完成；后台模式会提示用户重新勾选“显示浏览器窗口”。
+- 如果后台运行时遇到登录页，会提示用户勾选“显示浏览器窗口”并完成登录。
+- 可选启用首次搜索前 3 分钟冷却；冷却只在本次批量补全的第一个搜索前执行一次。
+- 提供重置函数清理 `browser_profiles/avfan`，用于验证状态或 Cookie 卡死时重新建立网页登录环境。
 - 处理成年确认弹窗。
 - 在首页搜索框输入视频编号并点击搜索。
 - 打开搜索结果详情页。
@@ -259,8 +281,8 @@ AVFan 网页抓取模块。
 
 职责：
 - 从数据库读取指定数量的未补全视频。
-- 根据 `show_browser` 创建 `AvfanScraper(headless=not show_browser)`。
-- 逐个调用 `AvfanScraper` 根据视频编号补全信息。
+- 根据 `show_browser` 和 `cooldown_before_search` 创建 `AvfanScraper`。
+- 逐个调用 `AvfanScraper` 根据视频编号补全信息，并在同一浏览器页面中连续搜索后续编号。
 - 将成功结果写回数据库并标记为 `已补全`。
 - 将失败结果标记为 `补全失败`，保留错误信息。
 
@@ -435,14 +457,27 @@ Local_Video_gui.py
 用户点击“补全信息”
   -> EnrichmentDialog 输入本次补全数量
   -> 可选勾选“显示浏览器窗口”
-  -> BackendClient.enrich_videos(limit, show_browser)
+  -> 可选勾选“冷却 3 分钟后再搜索”
+  -> BackendClient.enrich_videos(limit, show_browser, cooldown_before_search)
   -> POST /database/enrich
-  -> BackendService.enrich_videos(limit, show_browser)
-  -> VideoEnrichmentService(show_browser=show_browser).enrich_next_videos()
+  -> BackendService.enrich_videos(limit, show_browser, cooldown_before_search)
+  -> VideoEnrichmentService(show_browser=show_browser, cooldown_before_search=cooldown_before_search).enrich_next_videos()
   -> VideoDatabase.list_videos_for_enrichment(limit)
   -> AvfanScraper.fetch_by_code(code)
   -> VideoDatabase.update_video_enrichment()
   -> processed_videos 标记为“已补全”或“补全失败”
+```
+
+### 重置网页登录流程
+
+```text
+用户点击“重置网页登录”
+  -> GUI 弹出确认框
+  -> BackendClient.reset_browser_profile()
+  -> POST /browser-profile/reset
+  -> BackendService.reset_browser_profile()
+  -> reset_avfan_browser_profile()
+  -> 删除 browser_profiles/avfan
 ```
 
 ## 本地个人数据
@@ -452,11 +487,15 @@ Local_Video_gui.py
 ```gitignore
 *.csv
 *.db
+.env
+browser_profiles/
 ```
 
 注意：
 - `.gitignore` 只阻止未来未跟踪文件进入 Git。
 - 如果某个 `.csv` 或 `.db` 曾经已经被 Git 跟踪，需要使用 `git rm --cached` 从索引移除。
+- `.env` 中保存的是本机网页访问配置，仓库中只保留 `.env.example` 作为模板。
+- `browser_profiles/` 中可能保存网页登录状态、Cookie、LocalStorage 等敏感信息，只允许本机使用。
 - 如果个人数据已经推送到远程历史，普通删除只能移除最新版本，历史记录仍可能保留，需要单独做历史清理。
 
 ## 推荐修改位置
@@ -542,6 +581,8 @@ path_library_viewer.py
 - 不要在 `backend_server.py` 里写复杂业务逻辑。
 - 不要重新创建 `database.py`，数据库功能统一放在 `database_handler.py`。
 - 不要提交 `.csv` 或 `.db` 文件。
+- 不要提交 `.env`，只提交 `.env.example`。
+- 不要提交 `browser_profiles/`。
 - 不要在多个模块里复制文件名清洗正则，统一使用 `filename_rules.py`。
 - 不要在 GUI 或作者库页面里拆分作者字符串，统一使用 `actor_identifier.py`。
 - 不要在路径库页面里直接写 SQL，统一通过后端和 `path_library.py`。
@@ -552,7 +593,7 @@ path_library_viewer.py
 编译检查：
 
 ```powershell
-python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\avfan_scraper.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\enrichment_dialog.py .\filename_rules.py .\path_library.py .\path_library_viewer.py .\video_enrichment.py .\video_models.py .\video_renamer_api.py
+python -m py_compile .\Local_Video_gui.py .\actor_identifier.py .\actor_viewer.py .\app_config.py .\avfan_scraper.py .\backend_client.py .\backend_server.py .\backend_service.py .\csv_video_loader.py .\database_handler.py .\db_viewer.py .\enrichment_dialog.py .\filename_rules.py .\path_library.py .\path_library_viewer.py .\video_enrichment.py .\video_models.py .\video_renamer_api.py
 ```
 
 后端手动启动：

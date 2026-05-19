@@ -4,3 +4,5 @@ __pycache__/
 # Personal local data
 *.csv
 *.db
+.env
+browser_profiles/

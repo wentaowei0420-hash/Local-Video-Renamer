@@ -117,6 +117,9 @@ class VidNormApp(QWidget):
         self.btn_enrich = QPushButton('🌐 补全信息')
         self.btn_enrich.clicked.connect(self.enrich_video_info)
 
+        self.btn_reset_browser_profile = QPushButton('🧹 重置网页登录')
+        self.btn_reset_browser_profile.clicked.connect(self.reset_browser_profile)
+
         self.btn_execute = QPushButton('🚀 执行重命名')
         self.btn_execute.clicked.connect(self.execute_rename)
         self.btn_execute.setEnabled(False)
@@ -127,6 +130,7 @@ class VidNormApp(QWidget):
         bottom_layout.addWidget(self.btn_scan)
         bottom_layout.addWidget(self.btn_write_db)
         bottom_layout.addWidget(self.btn_enrich)
+        bottom_layout.addWidget(self.btn_reset_browser_profile)
         bottom_layout.addWidget(self.btn_execute)
 
         main_layout.addLayout(top_layout)
@@ -231,10 +235,15 @@ class VidNormApp(QWidget):
         values = dialog.values()
         limit = values['limit']
         show_browser = values['show_browser']
+        cooldown_before_search = values['cooldown_before_search']
 
         self.btn_enrich.setEnabled(False)
         try:
-            result = self.backend_client.enrich_videos(limit, show_browser=show_browser)
+            result = self.backend_client.enrich_videos(
+                limit,
+                show_browser=show_browser,
+                cooldown_before_search=cooldown_before_search,
+            )
             QMessageBox.information(
                 self,
                 "补全完成",
@@ -247,6 +256,33 @@ class VidNormApp(QWidget):
             QMessageBox.critical(self, "补全失败", str(exc))
         finally:
             self.btn_enrich.setEnabled(True)
+
+    def reset_browser_profile(self):
+        answer = QMessageBox.question(
+            self,
+            "重置网页登录状态",
+            "这会清除补全信息使用的专用浏览器登录状态、Cookie 和验证记录。\n"
+            "不会影响视频数据库，也不会影响你的日常 Chrome。\n\n"
+            "请先关闭补全时弹出的浏览器窗口，然后继续。是否重置？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.btn_reset_browser_profile.setEnabled(False)
+        try:
+            result = self.backend_client.reset_browser_profile()
+            QMessageBox.information(
+                self,
+                "重置完成",
+                f"{result.get('message', '已重置网页登录状态。')}\n\n"
+                f"目录：{result.get('profile_dir', '')}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "重置失败", str(exc))
+        finally:
+            self.btn_reset_browser_profile.setEnabled(True)
 
     # 👇 新增：弹出独立数据库查看器的方法
     def show_db_viewer(self):

@@ -69,7 +69,10 @@ def make_handler(service):
                 return service.enrich_videos(
                     body.get('limit', 1),
                     show_browser=bool(body.get('show_browser')),
+                    cooldown_before_search=bool(body.get('cooldown_before_search')),
                 )
+            if method == 'POST' and path == '/browser-profile/reset':
+                return service.reset_browser_profile()
 
             raise ValueError(f'未知接口: {method} {path}')
 

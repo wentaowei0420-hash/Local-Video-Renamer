@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from actor_identifier import ActorIdentifier
+from avfan_scraper import reset_avfan_browser_profile
 from database_handler import VideoDatabase
 from path_library import PathLibrary, summarize_paths
 from video_enrichment import VideoEnrichmentService
@@ -107,6 +108,13 @@ class BackendService:
 
         return {'deleted_count': self.db.delete_path(path_id)}
 
-    def enrich_videos(self, limit, show_browser=False):
-        enrichment_service = VideoEnrichmentService(self.db, show_browser=show_browser)
+    def enrich_videos(self, limit, show_browser=False, cooldown_before_search=False):
+        enrichment_service = VideoEnrichmentService(
+            self.db,
+            show_browser=show_browser,
+            cooldown_before_search=cooldown_before_search,
+        )
         return enrichment_service.enrich_next_videos(limit)
+
+    def reset_browser_profile(self):
+        return reset_avfan_browser_profile()

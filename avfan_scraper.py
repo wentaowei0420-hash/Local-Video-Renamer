@@ -1,73 +1,165 @@
 import re
+import shutil
+from contextlib import contextmanager
+from pathlib import Path
+
+from app_config import get_setting
 
 
-AVFAN_HOME_URL = 'https://avfan.com/zh-CN'
 AVFAN_MOVIE_RE = re.compile(r'/movies/([^/?#]+)')
+DEFAULT_PROFILE_DIR = Path(__file__).resolve().parent / 'browser_profiles' / 'avfan'
+SEARCH_COOLDOWN_MS = 180000
+MANUAL_CHECK_TIMEOUT_MS = 600000
+
+
+def reset_avfan_browser_profile(profile_dir=None):
+    target = Path(profile_dir) if profile_dir else DEFAULT_PROFILE_DIR
+    target = target.resolve()
+    profile_root = (Path(__file__).resolve().parent / 'browser_profiles').resolve()
+
+    if target != profile_root / 'avfan':
+        raise ValueError('拒绝清理非 AVFan 专用浏览器档案目录')
+
+    if not target.exists():
+        return {
+            'reset': False,
+            'profile_dir': str(target),
+            'message': '网页登录状态已经是空的。',
+        }
+
+    try:
+        shutil.rmtree(target)
+    except PermissionError as exc:
+        raise RuntimeError('网页登录状态正在被浏览器占用，请先关闭补全时弹出的浏览器窗口后再重置。') from exc
+
+    return {
+        'reset': True,
+        'profile_dir': str(target),
+        'message': '已重置网页登录状态。',
+    }
 
 
 class AvfanScraper:
-    def __init__(self, headless=True, locale='zh-CN'):
+    def __init__(self, headless=True, locale='zh-CN', profile_dir=None, cooldown_before_search=False):
         self.headless = headless
         self.locale = locale
+        self.profile_dir = Path(profile_dir) if profile_dir else DEFAULT_PROFILE_DIR
+        self.cooldown_before_search = cooldown_before_search
+        self.cooldown_used = False
+        self.home_url = get_setting('SCRAPER_HOME_URL', required=True)
+        self._playwright_manager = None
+        self._playwright = None
+        self._context = None
+        self._page = None
+
+    @contextmanager
+    def session(self):
+        created_here = False
+        if self._context is None or self._page is None:
+            self.open_session()
+            created_here = True
+        try:
+            yield self._page
+        finally:
+            if created_here:
+                self.close_session()
+
+    def open_session(self):
+        if self._context is not None and self._page is not None:
+            return self._page
+
+        sync_playwright = import_sync_playwright()
+        self._playwright_manager = sync_playwright()
+        self._playwright = self._playwright_manager.start()
+        self._context = self.open_context(self._playwright)
+        self._page = self.get_page(self._context)
+        return self._page
+
+    def close_session(self):
+        try:
+            if self._context is not None:
+                self._context.close()
+        finally:
+            self._context = None
+            self._page = None
+            self.cooldown_used = False
+            if self._playwright_manager is not None:
+                self._playwright_manager.stop()
+            self._playwright_manager = None
+            self._playwright = None
 
     def fetch_by_code(self, code):
         code = normalize_code(code)
         if not code:
             raise ValueError('视频编号不能为空')
 
-        sync_playwright = import_sync_playwright()
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.headless)
-            page = browser.new_page(
-                viewport={'width': 1440, 'height': 1200},
-                locale=self.locale,
-            )
-            try:
-                movie_url = self.search_movie_url(page, code)
-                if not movie_url:
-                    return {
-                        'code': code,
-                        'found': False,
-                        'error': '未搜索到匹配影片',
-                    }
+        with self.session() as page:
+            movie_url = self.search_movie_url(page, code)
+            if not movie_url:
+                return {
+                    'code': code,
+                    'found': False,
+                    'error': '未搜索到匹配影片',
+                }
 
-                page.goto(movie_url, wait_until='domcontentloaded', timeout=60000)
-                wait_for_page_ready(page)
-                movie_info = parse_movie_info_from_page(page)
-                movie_info['code'] = movie_info.get('code') or code
-                movie_info['avfan_movie_id'] = extract_movie_id(page.url)
-                movie_info['avfan_url'] = page.url
-                movie_info['found'] = True
-                return movie_info
-            finally:
-                browser.close()
+            page.goto(movie_url, wait_until='domcontentloaded', timeout=60000)
+            wait_for_security_verification_if_needed(page, self.headless)
+            wait_for_manual_login_if_needed(page, self.headless)
+            wait_for_page_ready(page)
+            movie_info = parse_movie_info_from_page(page)
+            movie_info['code'] = movie_info.get('code') or code
+            movie_info['avfan_movie_id'] = extract_movie_id(page.url)
+            movie_info['avfan_url'] = page.url
+            movie_info['found'] = True
+            return movie_info
 
     def fetch_by_url(self, url):
-        sync_playwright = import_sync_playwright()
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.headless)
-            page = browser.new_page(
-                viewport={'width': 1440, 'height': 1200},
-                locale=self.locale,
-            )
-            try:
-                page.goto(url, wait_until='domcontentloaded', timeout=60000)
-                accept_age_gate_if_needed(page)
-                wait_for_page_ready(page)
-                movie_info = parse_movie_info_from_page(page)
-                movie_info['avfan_movie_id'] = extract_movie_id(page.url)
-                movie_info['avfan_url'] = page.url
-                movie_info['found'] = bool(movie_info.get('code') or movie_info.get('title'))
-                return movie_info
-            finally:
-                browser.close()
+        with self.session() as page:
+            page.goto(url, wait_until='domcontentloaded', timeout=60000)
+            wait_for_security_verification_if_needed(page, self.headless)
+            accept_age_gate_if_needed(page)
+            wait_for_security_verification_if_needed(page, self.headless)
+            wait_for_manual_login_if_needed(page, self.headless)
+            wait_for_page_ready(page)
+            movie_info = parse_movie_info_from_page(page)
+            movie_info['avfan_movie_id'] = extract_movie_id(page.url)
+            movie_info['avfan_url'] = page.url
+            movie_info['found'] = bool(movie_info.get('code') or movie_info.get('title'))
+            return movie_info
+
+    def open_context(self, playwright):
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        launch_options = dict(
+            user_data_dir=str(self.profile_dir),
+            headless=self.headless,
+            viewport={'width': 1440, 'height': 1200},
+            locale=self.locale,
+        )
+        try:
+            return playwright.chromium.launch_persistent_context(channel='chrome', **launch_options)
+        except Exception:
+            return playwright.chromium.launch_persistent_context(**launch_options)
+
+    def get_page(self, context):
+        if context.pages:
+            return context.pages[0]
+        return context.new_page()
 
     def search_movie_url(self, page, code):
-        page.goto(AVFAN_HOME_URL, wait_until='domcontentloaded', timeout=60000)
+        if not can_search_from_current_page(page):
+            page.goto(self.home_url, wait_until='domcontentloaded', timeout=60000)
+
+        wait_for_security_verification_if_needed(page, self.headless)
         accept_age_gate_if_needed(page)
+        wait_for_security_verification_if_needed(page, self.headless)
+        wait_for_manual_login_if_needed(page, self.headless)
         wait_for_page_ready(page)
+        self.wait_before_first_search(page)
         fill_search_box(page, code)
         click_search_button(page)
+        wait_for_page_ready(page)
+        wait_for_security_verification_if_needed(page, self.headless)
+        wait_for_manual_login_if_needed(page, self.headless)
         wait_for_page_ready(page)
 
         results = collect_search_results(page, code)
@@ -75,14 +167,20 @@ class AvfanScraper:
             return results[0]['href']
         return None
 
+    def wait_before_first_search(self, page):
+        if not self.cooldown_before_search or self.cooldown_used:
+            return
+        self.cooldown_used = True
+        page.wait_for_timeout(SEARCH_COOLDOWN_MS)
+
 
 def import_sync_playwright():
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:
         raise RuntimeError(
-            '当前 Python 环境未安装 Playwright。请使用包含 Playwright 的环境运行系统，'
-            '例如 video_env，或执行 python -m pip install playwright。'
+            '当前 Python 环境未安装 Playwright。请使用包含 Playwright 的环境运行系统，例如 video_env，'
+            '或执行 python -m pip install playwright。'
         ) from exc
     return sync_playwright
 
@@ -99,6 +197,122 @@ def accept_age_gate_if_needed(page):
             continue
 
 
+def wait_for_security_verification_if_needed(page, headless):
+    if not is_security_verification_page(page):
+        return
+
+    if headless:
+        raise RuntimeError(
+            'AVFan 出现 Cloudflare 真人验证。请重新点击“补全信息”，勾选“显示浏览器窗口”，'
+            '在弹出的浏览器中手动完成验证；如果页面显示 Verification failed，请刷新页面后再验证。'
+        )
+
+    try:
+        page.wait_for_function(
+            """
+            () => {
+                const text = (document.body?.innerText || '').toLowerCase();
+                const title = (document.title || '').toLowerCase();
+                const combined = `${title}\\n${text}`;
+                const markers = [
+                    'security verification',
+                    'please complete the captcha',
+                    'verification failed',
+                    'cloudflare',
+                    'captcha',
+                    '请验证您是真人'
+                ];
+                const hasMarker = markers.some((marker) => combined.includes(marker));
+                const hasChallengeFrame = Boolean(
+                    document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                    document.querySelector('input[name="cf-turnstile-response"]') ||
+                    document.querySelector('[class*="cf-turnstile"]')
+                );
+                return !hasMarker && !hasChallengeFrame;
+            }
+            """,
+            timeout=MANUAL_CHECK_TIMEOUT_MS,
+        )
+        wait_for_page_ready(page)
+    except Exception as exc:
+        raise RuntimeError('等待真人验证超时，请刷新验证页面，通过后重新点击“补全信息”。') from exc
+
+
+def is_security_verification_page(page):
+    try:
+        title = page.title().lower()
+    except Exception:
+        title = ''
+
+    try:
+        text = page.locator('body').inner_text(timeout=1500).lower()
+    except Exception:
+        text = ''
+
+    combined = f'{title}\n{text}'
+    markers = (
+        'security verification',
+        'please complete the captcha',
+        'verification failed',
+        'cloudflare',
+        'captcha',
+        '请验证您是真人',
+    )
+    if any(marker in combined for marker in markers):
+        return True
+
+    for selector in (
+        'iframe[src*="challenges.cloudflare.com"]',
+        'input[name="cf-turnstile-response"]',
+        '[class*="cf-turnstile"]',
+    ):
+        try:
+            if page.locator(selector).count() > 0:
+                return True
+        except Exception:
+            continue
+
+    return False
+
+
+def wait_for_manual_login_if_needed(page, headless):
+    if not is_login_page(page):
+        return
+
+    if headless:
+        raise RuntimeError(
+            'AVFan 需要登录。请点击“补全信息”，勾选“显示浏览器窗口”，'
+            '在弹出的浏览器中完成登录后再继续补全。'
+        )
+
+    try:
+        page.wait_for_function(
+            """
+            () => {
+                const path = location.pathname.toLowerCase();
+                if (path.includes('sign_in') || path.includes('login')) return false;
+                const passwordInput = document.querySelector('input[type="password"]');
+                return !passwordInput;
+            }
+            """,
+            timeout=300000,
+        )
+        wait_for_page_ready(page)
+    except Exception as exc:
+        raise RuntimeError('等待登录超时，请重新点击“补全信息”并完成登录。') from exc
+
+
+def is_login_page(page):
+    url = (page.url or '').lower()
+    if 'sign_in' in url or 'login' in url:
+        return True
+
+    try:
+        return page.locator('input[type="password"]').first.is_visible(timeout=1200)
+    except Exception:
+        return False
+
+
 def wait_for_page_ready(page):
     try:
         page.wait_for_load_state('networkidle', timeout=12000)
@@ -112,6 +326,32 @@ def wait_for_page_ready(page):
     except Exception:
         pass
     page.wait_for_timeout(600)
+
+
+def can_search_from_current_page(page):
+    if not page.url or page.url == 'about:blank':
+        return False
+    if is_security_verification_page(page) or is_login_page(page):
+        return True
+    return has_search_input(page)
+
+
+def has_search_input(page):
+    selectors = (
+        'input[placeholder*="输入搜索关键词"]',
+        'input[placeholder*="关键词"]',
+        'input[placeholder*="搜索"]',
+        'input[placeholder*="搜尋"]',
+        'input[type="search"]',
+        'input[name="q"]',
+    )
+    for selector in selectors:
+        try:
+            if page.locator(selector).first.is_visible(timeout=800):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def fill_search_box(page, code):
@@ -177,6 +417,8 @@ def fill_search_box_by_js(page, code):
             });
             if (!target) return false;
             target.focus();
+            target.value = '';
+            target.dispatchEvent(new Event('input', { bubbles: true }));
             target.value = code;
             target.dispatchEvent(new Event('input', { bubbles: true }));
             target.dispatchEvent(new Event('change', { bubbles: true }));
@@ -279,7 +521,7 @@ def movie_field_aliases():
     return {
         'code': ('番号', '番號', '品番'),
         'release_date': ('发行日期', '發行日期', '发售日', '発売日', '日期'),
-        'duration': ('片长', '片長', '时长', '時長', '収録時間'),
+        'duration': ('片长', '片長', '时长', '時間', '収録時間'),
         'director': ('导演', '導演', '監督'),
         'maker': ('制作商', '製作商', 'メーカー'),
         'publisher': ('发行商', '發行商', '厂牌', 'レーベル'),
