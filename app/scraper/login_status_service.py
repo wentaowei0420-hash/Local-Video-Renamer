@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from app.core.app_config import get_setting
 
 
@@ -14,8 +16,9 @@ def ensure_logged_in_on_home(page, headless=False):
     password = get_setting('SCRAPER_PASSWORD', required=True)
 
     open_home_page(page, home_url, headless)
-    status = detect_home_login_status(page)
+    status = detect_home_login_status(page, home_url, headless)
     if status == LOGIN_STATUS_LOGGED_IN:
+        open_home_page(page, home_url, headless)
         return {
             'status': status,
             'auto_login_triggered': False,
@@ -28,9 +31,11 @@ def ensure_logged_in_on_home(page, headless=False):
         )
 
     run_login_flow(page, login_url, home_url, username, password, headless=False)
-    final_status = detect_home_login_status(page)
+    final_status = detect_home_login_status(page, home_url, headless)
     if final_status != LOGIN_STATUS_LOGGED_IN:
         raise RuntimeError('登录流程已执行，但仍未检测到登录成功，请检查验证码或账号状态。')
+
+    open_home_page(page, home_url, headless)
 
     return {
         'status': final_status,
@@ -47,23 +52,19 @@ def open_home_page(page, home_url, headless):
     wait_for_page_ready(page)
 
 
-def detect_home_login_status(page):
+def detect_home_login_status(page, home_url, headless):
+    settings_url = build_settings_url(home_url)
+    page.goto(settings_url, wait_until='domcontentloaded', timeout=60000)
+    wait_for_security_verification_if_needed(page, headless)
+    accept_age_gate_if_needed(page)
+    wait_for_security_verification_if_needed(page, headless)
     wait_for_page_ready(page)
-    if is_login_page(page):
-        return LOGIN_STATUS_LOGGED_OUT
-
-    clicked = click_user_menu_trigger(page)
-    if not clicked:
-        return LOGIN_STATUS_UNKNOWN
-
-    page.wait_for_timeout(500)
 
     if is_login_page(page):
         return LOGIN_STATUS_LOGGED_OUT
-
-    status = read_login_status_from_menu(page)
-    close_user_menu(page)
-    return status
+    if is_settings_page(page, settings_url):
+        return LOGIN_STATUS_LOGGED_IN
+    return LOGIN_STATUS_UNKNOWN
 
 
 def run_login_flow(page, login_url, home_url, username, password, headless):
@@ -77,50 +78,23 @@ def run_login_flow(page, login_url, home_url, username, password, headless):
     open_home_page(page, home_url, headless)
 
 
-def read_login_status_from_menu(page):
-    if any_visible_text(page, ('退出登录', '设置', '通知', '收藏的清单', '最近浏览', '清单')):
-        return LOGIN_STATUS_LOGGED_IN
-    if any_visible_text(page, ('登录', '注册')):
-        return LOGIN_STATUS_LOGGED_OUT
-    return LOGIN_STATUS_UNKNOWN
+def build_settings_url(home_url):
+    parsed = urlparse(str(home_url or '').strip())
+    base_path = parsed.path.rstrip('/')
+    settings_path = f'{base_path}/user/settings' if base_path else '/user/settings'
+    return parsed._replace(path=settings_path, params='', query='', fragment='').geturl()
 
 
-def click_user_menu_trigger(page):
-    try:
-        return bool(page.evaluate(
-            """
-            () => {
-                const nodes = Array.from(document.querySelectorAll('a, button, [role="button"]'));
-                const candidates = nodes.filter((node) => {
-                    const rect = node.getBoundingClientRect();
-                    const style = window.getComputedStyle(node);
-                    const text = (node.innerText || node.textContent || '').trim();
-                    if (!rect.width || !rect.height) return false;
-                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                    if (node.offsetParent === null) return false;
-                    if (rect.top > 180 || rect.bottom < 0) return false;
-                    if (rect.right < window.innerWidth * 0.7) return false;
-                    if (text.includes('搜索') || text.includes('全部')) return false;
-                    return true;
-                }).sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
-
-                const target = candidates[0];
-                if (!target) return false;
-                target.click();
-                return true;
-            }
-            """
-        ))
-    except Exception:
-        return False
-
-
-def close_user_menu(page):
-    try:
-        page.keyboard.press('Escape')
-        page.wait_for_timeout(200)
-    except Exception:
-        pass
+def is_settings_page(page, settings_url):
+    current = urlparse(str(page.url or ''))
+    target = urlparse(str(settings_url or ''))
+    return bool(
+        current.scheme and
+        current.netloc and
+        current.scheme == target.scheme and
+        current.netloc == target.netloc and
+        current.path.rstrip('/') == target.path.rstrip('/')
+    )
 
 
 def fill_login_form(page, username, password):
@@ -153,16 +127,6 @@ def fill_first_visible(page, selectors, value, error_message):
         except Exception:
             continue
     raise RuntimeError(error_message)
-
-
-def any_visible_text(page, texts):
-    for text in texts:
-        try:
-            if page.get_by_text(text, exact=True).first.is_visible(timeout=800):
-                return True
-        except Exception:
-            continue
-    return False
 
 
 def accept_age_gate_if_needed(page):

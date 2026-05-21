@@ -7,7 +7,9 @@ class AutoLoginService:
         self.scraper = scraper or AvfanScraper(headless=False)
 
     def run(self):
-        with self.scraper.session() as page:
+        self.scraper.open_session()
+        page = self.scraper.get_page(self.scraper._context)
+        try:
             result = ensure_logged_in_on_home(page, headless=False)
             return {
                 'success': True,
@@ -16,3 +18,5 @@ class AutoLoginService:
                 'auto_login_triggered': bool(result.get('auto_login_triggered')),
                 'current_url': page.url,
             }
+        finally:
+            self.scraper.close_session()

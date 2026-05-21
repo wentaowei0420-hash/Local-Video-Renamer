@@ -77,6 +77,33 @@ class AvfanScraper:
         self._page = self.get_page(self._context)
         return self._page
 
+    def use_fresh_page(self, close_existing=False):
+        page = self.open_session()
+        context = self._context
+        if context is None:
+            return page
+
+        existing_pages = list(context.pages)
+        if close_existing:
+            for existing_page in existing_pages:
+                try:
+                    existing_page.close()
+                except Exception:
+                    continue
+            self._page = context.new_page()
+            return self._page
+
+        if page is None or page.is_closed():
+            self._page = context.new_page()
+            return self._page
+
+        current_url = (page.url or '').lower()
+        if '/movies/' in current_url:
+            self._page = context.new_page()
+            return self._page
+
+        return page
+
     def close_session(self):
         try:
             if self._context is not None:
@@ -145,9 +172,18 @@ class AvfanScraper:
             return playwright.chromium.launch_persistent_context(**launch_options)
 
     def get_page(self, context):
-        if context.pages:
-            return context.pages[0]
-        return context.new_page()
+        # Persistent profiles may restore the last browsing session, including
+        # movie detail pages. Start every workflow from a fresh page so auto
+        # login and scraping do not briefly jump to stale tabs.
+        fresh_page = context.new_page()
+        for page in list(context.pages):
+            if page == fresh_page:
+                continue
+            try:
+                page.close()
+            except Exception:
+                continue
+        return fresh_page
 
     def search_movie_url(self, page, code):
         if is_login_page(page) or is_security_verification_page(page) or not can_search_from_current_page(page):
