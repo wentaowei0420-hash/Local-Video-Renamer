@@ -1,6 +1,12 @@
 import sqlite3
 from pathlib import Path
 
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    UNENRICHED_STATUS,
+)
 from app.core.project_paths import DATABASE_FILE
 from app.services.actor_identifier import IGNORED_ACTOR_NAMES, is_ignored_actor_name
 
@@ -388,6 +394,91 @@ class VideoDatabase:
                 path_id,
             ))
             conn.commit()
+
+    def list_videos_for_enrichment(self, limit):
+        """只返回仍应继续补全的视频，跳过已补全和无搜索结果。"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT code, title, author
+                FROM processed_videos
+                WHERE COALESCE(enrichment_status, ?) IN (?, ?)
+                ORDER BY code
+                LIMIT ?
+            ''', (
+                UNENRICHED_STATUS,
+                UNENRICHED_STATUS,
+                FAILED_STATUS,
+                int(limit),
+            ))
+
+            return [
+                {
+                    'code': row[0] or '',
+                    'title': row[1] or '',
+                    'author': row[2] or '',
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def mark_video_no_search_results(self, code, error='未搜索到匹配影片'):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE processed_videos
+                SET enrichment_status = ?,
+                    enrichment_error = ?,
+                    enriched_at = CURRENT_TIMESTAMP
+                WHERE code = ?
+            ''', (NO_SEARCH_RESULTS_STATUS, error, code))
+            conn.commit()
+
+    def mark_video_enrichment_failed(self, code, error):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE processed_videos
+                SET enrichment_status = ?,
+                    enrichment_error = ?,
+                    enriched_at = CURRENT_TIMESTAMP
+                WHERE code = ?
+            ''', (FAILED_STATUS, error, code))
+            conn.commit()
+
+    def count_videos_by_enrichment_status(self, status):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*)
+                FROM processed_videos
+                WHERE COALESCE(enrichment_status, ?) = ?
+            ''', (UNENRICHED_STATUS, status))
+            return int(cursor.fetchone()[0] or 0)
+
+    def get_video_enrichment_summary(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT
+                    COUNT(*) AS total_count,
+                    SUM(
+                        CASE
+                            WHEN COALESCE(enrichment_status, ?) = ? THEN 1
+                            ELSE 0
+                        END
+                    ) AS enriched_count
+                FROM processed_videos
+            ''', (UNENRICHED_STATUS, ENRICHED_STATUS))
+            row = cursor.fetchone() or (0, 0)
+
+        total_count = int(row[0] or 0)
+        enriched_count = int(row[1] or 0)
+        unenriched_count = max(total_count - enriched_count, 0)
+        return {
+            'enriched_count': enriched_count,
+            'unenriched_count': unenriched_count,
+            'total_count': total_count,
+        }
 
     def get_path_by_value(self, folder_path):
         with sqlite3.connect(self.db_path) as conn:

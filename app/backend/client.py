@@ -62,6 +62,10 @@ class BackendClient:
             query = '?' + urlencode({'q': search_text})
         return self._get('/database/actors' + query).get('actors', [])
 
+    def get_actor_detail(self, actor_name):
+        query = '?' + urlencode({'name': actor_name})
+        return self._get('/database/actors/detail' + query).get('actor', {})
+
     def list_code_prefixes(self, search_text=''):
         query = ''
         if search_text:

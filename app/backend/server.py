@@ -58,6 +58,9 @@ def make_handler(service):
             if method == 'GET' and path == '/database/actors':
                 search_text = query.get('q', [''])[0]
                 return service.list_actors(search_text)
+            if method == 'GET' and path == '/database/actors/detail':
+                actor_name = query.get('name', [''])[0]
+                return service.get_actor_detail(actor_name)
             if method == 'GET' and path == '/database/code-prefixes':
                 search_text = query.get('q', [''])[0]
                 return service.list_code_prefixes(search_text)

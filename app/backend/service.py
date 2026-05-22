@@ -6,6 +6,7 @@ from app.core.project_paths import ACTOR_CSV_FILE, DATABASE_FILE, PROJECT_ROOT, 
 from app.core.video_models import plan_from_dict, plan_to_dict, result_to_dict
 from app.data.database_handler import VideoDatabase
 from app.scraper.avfan_scraper import reset_avfan_browser_profile
+from app.services.actor_detail_library import ActorDetailLibrary
 from app.services.actor_identifier import ActorIdentifier
 from app.services.auto_login_service import AutoLoginService
 from app.services.code_prefix_library import CodePrefixLibrary
@@ -21,6 +22,7 @@ class BackendService:
         self.db = VideoDatabase(DATABASE_FILE)
         self.renamer = VideoRenamerAPI(self.csv_path)
         self.actor_identifier = ActorIdentifier(self.actor_csv_path)
+        self.actor_detail_library = ActorDetailLibrary(self.db)
         self.code_prefix_library = CodePrefixLibrary(self.db)
         self.path_library = PathLibrary()
         self.database_loaded = False
@@ -93,6 +95,9 @@ class BackendService:
 
     def list_actors(self, search_text=''):
         return {'actors': self.db.list_actors(search_text)}
+
+    def get_actor_detail(self, actor_name):
+        return {'actor': self.actor_detail_library.get_actor_detail(actor_name)}
 
     def list_code_prefixes(self, search_text=''):
         return {'prefixes': self.code_prefix_library.list_prefixes(search_text)}

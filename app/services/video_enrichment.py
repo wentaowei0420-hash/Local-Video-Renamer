@@ -1,10 +1,11 @@
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    UNENRICHED_STATUS,
+)
 from app.scraper.avfan_scraper import AvfanScraper
 from app.scraper.exceptions import HumanVerificationRequiredError
-
-
-ENRICHED_STATUS = '已补全'
-UNENRICHED_STATUS = '未补全'
-FAILED_STATUS = '补全失败'
 
 
 class VideoEnrichmentService:
@@ -52,12 +53,13 @@ class VideoEnrichmentService:
                             'info': info,
                         })
                     else:
-                        self.database.update_video_enrichment(code, info, FAILED_STATUS)
+                        error_message = info.get('error', '未搜索到匹配影片')
+                        self.database.mark_video_no_search_results(code, error_message)
                         failed_count += 1
                         results.append({
                             'code': code,
-                            'status': FAILED_STATUS,
-                            'error': info.get('error', '未搜索到匹配影片'),
+                            'status': NO_SEARCH_RESULTS_STATUS,
+                            'error': error_message,
                         })
                 except HumanVerificationRequiredError as exc:
                     error_message = str(exc)
