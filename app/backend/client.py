@@ -64,6 +64,9 @@ class BackendClient:
     def get_video_enrichment_summary(self):
         return self._get('/database/videos/summary').get('summary', {})
 
+    def get_data_center_summary(self):
+        return self._get('/data-center/summary').get('summary', {})
+
     def reset_video_enrichments(self, codes):
         return self._post('/database/videos/reset', {'codes': codes}).get('reset_count', 0)
 

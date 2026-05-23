@@ -55,6 +55,8 @@ def make_handler(service):
                 return service.list_videos(search_text)
             if method == 'GET' and path == '/database/videos/summary':
                 return service.get_video_enrichment_summary()
+            if method == 'GET' and path == '/data-center/summary':
+                return service.get_data_center_summary()
             if method == 'POST' and path == '/database/videos/reset':
                 return service.reset_video_enrichments(body.get('codes', []))
             if method == 'GET' and path == '/database/actors':

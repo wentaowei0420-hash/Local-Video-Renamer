@@ -10,6 +10,7 @@ from app.services.actor_library_sync_service import ActorLibrarySyncService
 from app.services.auto_login_service import AutoLoginService
 from app.services.code_prefix_detail_library import CodePrefixDetailLibrary
 from app.services.code_prefix_library import CodePrefixLibrary
+from app.services.data_center_service import DataCenterService
 from app.services.library_admin_service import LibraryAdminService
 from app.services.library_enrichment_service import LibraryEnrichmentService
 from app.services.local_video_library_service import LocalVideoLibraryService
@@ -25,6 +26,7 @@ class BackendService:
         self.actor_library_sync_service = ActorLibrarySyncService(self.db)
         self.code_prefix_detail_library = CodePrefixDetailLibrary(self.db)
         self.code_prefix_library = CodePrefixLibrary(self.db)
+        self.data_center_service = DataCenterService(self.db)
         self.library_admin_service = LibraryAdminService(self.db)
         self.path_library = PathLibrary()
         self.database_loaded = False
@@ -69,6 +71,10 @@ class BackendService:
 
     def get_video_enrichment_summary(self):
         return {'summary': self.db.get_video_enrichment_summary()}
+
+    def get_data_center_summary(self):
+        self.ensure_database_loaded()
+        return {'summary': self.data_center_service.get_summary()}
 
     def reset_video_enrichments(self, codes):
         return {'reset_count': self.db.reset_video_enrichments(codes)}

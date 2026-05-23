@@ -28,7 +28,7 @@ from app.core.local_video_labels import (
 from app.core.project_paths import PROJECT_ROOT
 from app.gui.actor_viewer import ActorViewerWindow
 from app.gui.code_prefix_viewer import CodePrefixViewerWindow
-from app.gui.db_viewer import DatabaseViewerWindow
+from app.gui.data_center_viewer import DataCenterWindow
 from app.gui.enrichment_dialog import EnrichmentDialog
 from app.gui.path_library_viewer import PathLibraryWindow
 
@@ -167,8 +167,8 @@ class VidNormApp(QWidget):
         top_button_row = QHBoxLayout()
         bottom_button_row = QHBoxLayout()
 
-        self.btn_view_db = QPushButton('查看视频库')
-        self.btn_view_db.clicked.connect(self.show_db_viewer)
+        self.btn_data_center = QPushButton('数据中心')
+        self.btn_data_center.clicked.connect(self.show_data_center)
 
         self.btn_view_actors = QPushButton('查看作者库')
         self.btn_view_actors.clicked.connect(self.show_actor_viewer)
@@ -200,7 +200,7 @@ class VidNormApp(QWidget):
         self.btn_execute.clicked.connect(self.execute_rename)
         self.btn_execute.setEnabled(False)
 
-        top_button_row.addWidget(self.btn_view_db)
+        top_button_row.addWidget(self.btn_data_center)
         top_button_row.addWidget(self.btn_view_actors)
         top_button_row.addWidget(self.btn_view_code_prefixes)
         top_button_row.addStretch()
@@ -323,7 +323,6 @@ class VidNormApp(QWidget):
             return
 
         success = response.get('success_count', 0)
-
         self.refresh_scan_results(show_message=False)
         QMessageBox.information(self, '结果', f'成功重命名 {success} 个文件。')
 
@@ -612,8 +611,8 @@ class VidNormApp(QWidget):
         finally:
             self.btn_reset_browser_profile.setEnabled(True)
 
-    def show_db_viewer(self):
-        viewer = DatabaseViewerWindow(backend_client=self.backend_client, parent=self)
+    def show_data_center(self):
+        viewer = DataCenterWindow(backend_client=self.backend_client, parent=self)
         viewer.exec_()
 
     def show_actor_viewer(self):
