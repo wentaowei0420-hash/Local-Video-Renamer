@@ -54,9 +54,21 @@ class BackendClient:
         limit,
         show_browser=False,
         cooldown_before_search=False,
+        combo_task_settings=None,
     ):
-        timeout = max(self.timeout, int(limit or 1) * 300 + 120)
-        if cooldown_before_search:
+        combo_task_settings = dict(combo_task_settings or {})
+        combo_limits = [
+            int((task_settings or {}).get('limit', 0) or 0)
+            for task_settings in combo_task_settings.values()
+            if int((task_settings or {}).get('limit', 0) or 0) > 0
+        ]
+        effective_limit = max(combo_limits) if combo_limits else int(limit or 1)
+        timeout = max(self.timeout, effective_limit * 300 + 120)
+        effective_cooldown = cooldown_before_search or any(
+            bool((task_settings or {}).get('cooldown_before_search'))
+            for task_settings in combo_task_settings.values()
+        )
+        if effective_cooldown:
             timeout += 180
         return self._post(
             '/database/enrich/combo',
@@ -65,6 +77,7 @@ class BackendClient:
                 'limit': limit,
                 'show_browser': show_browser,
                 'cooldown_before_search': cooldown_before_search,
+                'combo_task_settings': combo_task_settings,
             },
             timeout=timeout,
         )

@@ -95,39 +95,6 @@ class MovieAuthorResolver:
                 pending_count += 1
         return pending_count
 
-    def build_lookup_priority(self, entries):
-        normalized_entries = self._prepare_entries(entries)
-        cached_rows = self._load_cached_rows(normalized_entries)
-        pending_entries = []
-        started = False
-
-        for entry in normalized_entries:
-            if not self._should_lookup_author(entry):
-                continue
-
-            code = self._normalize_code(entry.get('code', ''))
-            if not code:
-                continue
-
-            cached_row = cached_rows.get(code, {})
-            cached_author = normalize_second_source_actor_text((cached_row or {}).get('javtxt_actors', ''))
-            cached_status = self._normalize_video_status((cached_row or {}).get('javtxt_enrichment_status', ''))
-            if cached_author or (cached_status in TERMINAL_JAVTXT_VIDEO_STATUSES and cached_status != UNENRICHED_STATUS):
-                started = True
-
-            if self._should_attempt_lookup(entry, cached_rows):
-                pending_entries.append(entry)
-
-        earliest_pending_date = ''
-        if pending_entries:
-            earliest_pending_date = str(pending_entries[0].get('release_date', '') or '').strip()
-
-        return {
-            'pending_count': len(pending_entries),
-            'started': started,
-            'earliest_pending_date': earliest_pending_date,
-        }
-
     def _normalize_entry(self, entry):
         updated = dict(entry or {})
         updated['author'] = normalize_second_source_actor_text(updated.get('author', ''))
@@ -261,6 +228,9 @@ class MovieAuthorResolver:
         return text or UNENRICHED_STATUS
 
     def _lookup_order_key(self, entry):
-        release_date = self._parse_release_date((entry or {}).get('release_date', ''))
         normalized_code = self._normalize_code((entry or {}).get('code', ''))
-        return (release_date or date.max, normalized_code)
+        prefix_part = re.match(r'[A-Z]+', normalized_code or '')
+        number_match = re.search(r'(\d+)', normalized_code or '')
+        prefix_text = prefix_part.group(0) if prefix_part else normalized_code
+        number_value = int(number_match.group(1)) if number_match else 10 ** 12
+        return (prefix_text, number_value, normalized_code)

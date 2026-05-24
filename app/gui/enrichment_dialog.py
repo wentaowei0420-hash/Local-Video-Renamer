@@ -15,7 +15,13 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.core.combo_enrichment import DEFAULT_COMBO_KEY, FU_SHUI_COMBO, KAN_SHUI_COMBO, normalize_combo_key
+from app.core.combo_enrichment import (
+    DEFAULT_COMBO_KEY,
+    FU_SHUI_COMBO,
+    KAN_SHUI_COMBO,
+    get_combo_tasks,
+    normalize_combo_key,
+)
 from app.core.enrichment_sources import (
     AVFAN_VIDEO_SOURCE,
     DEFAULT_VIDEO_ENRICHMENT_SOURCE,
@@ -469,7 +475,51 @@ class EnrichmentDialog(QDialog):
         current_settings['target_type'] = self.selected_target_type()
         current_settings['source_key'] = self.selected_source_key()
         current_settings['combo_key'] = self.selected_combo_key()
+        current_settings['combo_task_settings'] = self.build_combo_task_settings(self.selected_combo_key())
         return current_settings
+
+    def build_combo_task_settings(self, combo_key):
+        combo_task_settings = {}
+        for task_definition in get_combo_tasks(combo_key):
+            target_type = task_definition['target_type']
+            source_key = task_definition['source_key']
+            source_settings = dict(
+                self.target_settings.get(target_type, {}).get(
+                    source_key,
+                    DEFAULT_TARGET_SETTINGS[target_type][source_key],
+                )
+            )
+            combo_task_settings[task_definition['task_key']] = {
+                'target_type': target_type,
+                'source_key': source_key,
+                'limit': self._to_bounded_int(
+                    source_settings.get('limit', DEFAULT_TARGET_SETTINGS[target_type][source_key]['limit']),
+                    DEFAULT_TARGET_SETTINGS[target_type][source_key]['limit'],
+                    self.limit_input.minimum(),
+                    self.limit_input.maximum(),
+                ),
+                'batch_limit': self._to_bounded_int(
+                    source_settings.get(
+                        'batch_limit',
+                        DEFAULT_TARGET_SETTINGS[target_type][source_key]['batch_limit'],
+                    ),
+                    DEFAULT_TARGET_SETTINGS[target_type][source_key]['batch_limit'],
+                    self.batch_limit_input.minimum(),
+                    self.batch_limit_input.maximum(),
+                ),
+                'batch_interval_minutes': self._to_bounded_int(
+                    source_settings.get(
+                        'batch_interval_minutes',
+                        DEFAULT_TARGET_SETTINGS[target_type][source_key]['batch_interval_minutes'],
+                    ),
+                    DEFAULT_TARGET_SETTINGS[target_type][source_key]['batch_interval_minutes'],
+                    self.interval_minutes_input.minimum(),
+                    self.interval_minutes_input.maximum(),
+                ),
+                'show_browser': bool(source_settings.get('show_browser', False)),
+                'cooldown_before_search': bool(source_settings.get('cooldown_before_search', False)),
+            }
+        return combo_task_settings
 
     def update_source_controls(self):
         is_avfan_source = self.selected_source_key() == AVFAN_VIDEO_SOURCE

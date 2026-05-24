@@ -22,7 +22,7 @@ class ComboEnrichmentService:
         self.internal_stop_event = Event()
         self._result_lock = Lock()
 
-    def run(self, combo_key, limit, show_browser=False, cooldown_before_search=False):
+    def run(self, combo_key, limit, show_browser=False, cooldown_before_search=False, combo_task_settings=None):
         normalized_combo_key = normalize_combo_key(combo_key)
         combo_label = get_combo_label(normalized_combo_key)
         task_definitions = get_combo_tasks(normalized_combo_key)
@@ -30,9 +30,21 @@ class ComboEnrichmentService:
         if limit <= 0:
             raise ValueError('组合任务数量必须大于 0')
 
+        task_run_configs = self._normalize_task_run_configs(
+            task_definitions,
+            combo_task_settings,
+            default_limit=limit,
+            default_show_browser=show_browser,
+            default_cooldown_before_search=cooldown_before_search,
+        )
+        effective_limit = max(
+            int(task_config.get('limit', 0) or 0)
+            for task_config in task_run_configs.values()
+        )
+
         self.combo_progress_service.start(
             normalized_combo_key,
-            limit,
+            effective_limit,
             log_path=str(self.logger.log_path),
         )
         self.logger.log(
@@ -40,7 +52,7 @@ class ComboEnrichmentService:
             '组合任务开始执行',
             combo_key=normalized_combo_key,
             combo_label=combo_label,
-            limit=limit,
+            limit=effective_limit,
             show_browser=bool(show_browser),
             cooldown_before_search=bool(cooldown_before_search),
         )
@@ -49,15 +61,10 @@ class ComboEnrichmentService:
         worker_threads = []
 
         for task_definition in task_definitions:
+            task_config = dict(task_run_configs.get(task_definition['task_key'], {}))
             worker_thread = Thread(
                 target=self._run_subtask,
-                args=(
-                    task_definition,
-                    limit,
-                    show_browser,
-                    cooldown_before_search,
-                    results_by_task,
-                ),
+                args=(task_definition, task_config, results_by_task),
                 daemon=True,
             )
             worker_threads.append(worker_thread)
@@ -66,11 +73,7 @@ class ComboEnrichmentService:
         for worker_thread in worker_threads:
             worker_thread.join()
 
-        result = self._build_result(
-            normalized_combo_key,
-            combo_label,
-            results_by_task,
-        )
+        result = self._build_result(normalized_combo_key, combo_label, results_by_task)
         finish_message = result.get('message', '') or '组合任务已完成。'
         self.combo_progress_service.finish(
             message=finish_message,
@@ -92,9 +95,12 @@ class ComboEnrichmentService:
     def request_stop(self):
         self.internal_stop_event.set()
 
-    def _run_subtask(self, task_definition, limit, show_browser, cooldown_before_search, results_by_task):
+    def _run_subtask(self, task_definition, task_config, results_by_task):
         task_key = task_definition['task_key']
         task_label = task_definition['task_label']
+        limit = max(1, int((task_config or {}).get('limit', 1) or 1))
+        show_browser = bool((task_config or {}).get('show_browser'))
+        cooldown_before_search = bool((task_config or {}).get('cooldown_before_search'))
         tracker = self.combo_progress_service.build_subtask_tracker(task_definition, self.logger)
         self.logger.log(
             'INFO',
@@ -102,6 +108,8 @@ class ComboEnrichmentService:
             task_key=task_key,
             task_label=task_label,
             limit=limit,
+            show_browser=show_browser,
+            cooldown_before_search=cooldown_before_search,
         )
 
         try:
@@ -177,7 +185,7 @@ class ComboEnrichmentService:
                 should_stop=should_stop,
                 progress_tracker=progress_tracker,
             )
-            return service, lambda current_service, limit: current_service.enrich_next_prefixes(limit)
+            return service, lambda current_service, current_limit: current_service.enrich_next_prefixes(current_limit)
 
         if task_key == 'actor_avfan':
             scraper = AvfanActorScraper(
@@ -191,7 +199,7 @@ class ComboEnrichmentService:
                 should_stop=should_stop,
                 progress_tracker=progress_tracker,
             )
-            return service, lambda current_service, limit: current_service.enrich_next_actors(limit)
+            return service, lambda current_service, current_limit: current_service.enrich_next_actors(current_limit)
 
         if task_key == 'code_prefix_javtxt':
             service = CodePrefixJavtxtEnrichmentService(
@@ -200,7 +208,7 @@ class ComboEnrichmentService:
                 should_stop=should_stop,
                 progress_tracker=progress_tracker,
             )
-            return service, lambda current_service, limit: current_service.enrich_next_prefixes(limit)
+            return service, lambda current_service, current_limit: current_service.enrich_next_prefixes(current_limit)
 
         if task_key == 'actor_javtxt':
             service = ActorJavtxtEnrichmentService(
@@ -209,9 +217,31 @@ class ComboEnrichmentService:
                 should_stop=should_stop,
                 progress_tracker=progress_tracker,
             )
-            return service, lambda current_service, limit: current_service.enrich_next_actors(limit)
+            return service, lambda current_service, current_limit: current_service.enrich_next_actors(current_limit)
 
         raise ValueError(f'不支持的组合子任务: {task_key}')
+
+    @staticmethod
+    def _normalize_task_run_configs(
+        task_definitions,
+        combo_task_settings,
+        default_limit,
+        default_show_browser,
+        default_cooldown_before_search,
+    ):
+        normalized = {}
+        raw_settings = dict(combo_task_settings or {})
+        for task_definition in task_definitions:
+            task_key = task_definition['task_key']
+            current_settings = dict(raw_settings.get(task_key, {}) or {})
+            normalized[task_key] = {
+                'limit': max(1, int(current_settings.get('limit', default_limit) or default_limit)),
+                'show_browser': bool(current_settings.get('show_browser', default_show_browser)),
+                'cooldown_before_search': bool(
+                    current_settings.get('cooldown_before_search', default_cooldown_before_search)
+                ),
+            }
+        return normalized
 
     def _build_avfan_profile_dir(self, task_key):
         profile_dir = COMBO_BROWSER_PROFILES_DIR / task_key

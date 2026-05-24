@@ -68,13 +68,14 @@ class ComboEnrichmentWorker(QObject):
     finished = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
-    def __init__(self, backend_client, combo_key, limit, show_browser, cooldown_before_search):
+    def __init__(self, backend_client, combo_key, limit, show_browser, cooldown_before_search, combo_task_settings=None):
         super().__init__()
         self.backend_client = backend_client
         self.combo_key = combo_key
         self.limit = limit
         self.show_browser = show_browser
         self.cooldown_before_search = cooldown_before_search
+        self.combo_task_settings = dict(combo_task_settings or {})
 
     def run(self):
         try:
@@ -83,6 +84,7 @@ class ComboEnrichmentWorker(QObject):
                 self.limit,
                 show_browser=self.show_browser,
                 cooldown_before_search=self.cooldown_before_search,
+                combo_task_settings=self.combo_task_settings,
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -414,6 +416,10 @@ class VidNormApp(QWidget):
                 values['limit'],
                 values['show_browser'],
                 values['cooldown_before_search'],
+                combo_task_settings=self._build_combo_task_settings_for_mode(
+                    values.get('combo_task_settings', {}),
+                    use_batch_limit=False,
+                ),
                 mode='combo_single',
             )
             return
@@ -461,7 +467,15 @@ class VidNormApp(QWidget):
         self.enrichment_thread.finished.connect(self.cleanup_enrichment_thread)
         self.enrichment_thread.start()
 
-    def start_combo_enrichment(self, combo_key, limit, show_browser, cooldown_before_search, mode='combo_single'):
+    def start_combo_enrichment(
+        self,
+        combo_key,
+        limit,
+        show_browser,
+        cooldown_before_search,
+        combo_task_settings=None,
+        mode='combo_single',
+    ):
         self.current_enrichment_kind = 'combo'
         self.enrichment_mode = mode
         if mode == 'combo_batch':
@@ -481,6 +495,7 @@ class VidNormApp(QWidget):
             limit,
             show_browser,
             cooldown_before_search,
+            combo_task_settings=combo_task_settings,
         )
         self.enrichment_worker.moveToThread(self.enrichment_thread)
         self.enrichment_thread.started.connect(self.enrichment_worker.run)
@@ -510,14 +525,22 @@ class VidNormApp(QWidget):
         self.run_next_batch_enrichment()
 
     def start_batch_combo_enrichment(self, values):
+        combo_task_settings = self._build_combo_task_settings_for_mode(
+            values.get('combo_task_settings', {}),
+            use_batch_limit=True,
+        )
         self.batch_enrichment_active = True
         self.batch_enrichment_config = {
             'task_kind': 'combo',
             'combo_key': values['combo_key'],
-            'limit': values['batch_limit'],
-            'interval_minutes': values['batch_interval_minutes'],
+            'limit': self._combo_default_limit(combo_task_settings, fallback=values['batch_limit']),
+            'interval_minutes': self._combo_batch_interval_minutes(
+                combo_task_settings,
+                fallback=values['batch_interval_minutes'],
+            ),
             'show_browser': values['show_browser'],
             'cooldown_before_search': values['cooldown_before_search'],
+            'combo_task_settings': combo_task_settings,
         }
         self.batch_enrichment_round = 0
         self.status_label.setText(
@@ -543,6 +566,7 @@ class VidNormApp(QWidget):
                 self.batch_enrichment_config['limit'],
                 self.batch_enrichment_config['show_browser'],
                 self.batch_enrichment_config['cooldown_before_search'],
+                combo_task_settings=self.batch_enrichment_config.get('combo_task_settings', {}),
                 mode='combo_batch',
             )
             return
@@ -555,6 +579,44 @@ class VidNormApp(QWidget):
             self.batch_enrichment_config['source_key'],
             mode='batch',
         )
+
+    @staticmethod
+    def _build_combo_task_settings_for_mode(combo_task_settings, use_batch_limit):
+        normalized = {}
+        for task_key, task_settings in dict(combo_task_settings or {}).items():
+            current = dict(task_settings or {})
+            limit_key = 'batch_limit' if use_batch_limit else 'limit'
+            normalized[task_key] = {
+                'target_type': current.get('target_type'),
+                'source_key': current.get('source_key'),
+                'limit': max(1, int(current.get(limit_key, current.get('limit', 1)) or 1)),
+                'show_browser': bool(current.get('show_browser')),
+                'cooldown_before_search': bool(current.get('cooldown_before_search')),
+                'batch_interval_minutes': max(1, int(current.get('batch_interval_minutes', 1) or 1)),
+            }
+        return normalized
+
+    @staticmethod
+    def _combo_default_limit(combo_task_settings, fallback=1):
+        limits = [
+            max(1, int((task_settings or {}).get('limit', 0) or 0))
+            for task_settings in dict(combo_task_settings or {}).values()
+            if int((task_settings or {}).get('limit', 0) or 0) > 0
+        ]
+        if limits:
+            return max(limits)
+        return max(1, int(fallback or 1))
+
+    @staticmethod
+    def _combo_batch_interval_minutes(combo_task_settings, fallback=1):
+        intervals = [
+            max(1, int((task_settings or {}).get('batch_interval_minutes', 0) or 0))
+            for task_settings in dict(combo_task_settings or {}).values()
+            if int((task_settings or {}).get('batch_interval_minutes', 0) or 0) > 0
+        ]
+        if intervals:
+            return max(intervals)
+        return max(1, int(fallback or 1))
 
     def schedule_next_batch_enrichment(self, last_result=None):
         if not self.batch_enrichment_active or self.batch_enrichment_config is None:

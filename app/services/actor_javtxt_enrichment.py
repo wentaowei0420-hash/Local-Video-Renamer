@@ -120,14 +120,12 @@ class ActorJavtxtEnrichmentService:
                 continue
 
             movies = self.database.list_actor_movies(actor_name)
-            lookup_priority = self.author_resolver.build_lookup_priority(movies)
-            if int(lookup_priority.get('pending_count', 0) or 0) <= 0:
+            pending_count = self.author_resolver.count_pending_entries(movies)
+            if pending_count <= 0:
                 continue
 
-            actor_names.append((self._actor_priority_key(actor_name, lookup_priority), actor_name))
-
-        actor_names.sort(key=lambda item: item[0])
-        return [actor_name for _, actor_name in actor_names]
+            actor_names.append(actor_name)
+        return actor_names
 
     def _remaining_actor_video_count(self, ready_actor_names=None):
         actor_names = ready_actor_names if ready_actor_names is not None else self._ready_actor_names()
@@ -136,12 +134,6 @@ class ActorJavtxtEnrichmentService:
     def _pending_actor_video_count(self, actor_name):
         movies = self.database.list_actor_movies(actor_name)
         return self.author_resolver.count_pending_entries(movies)
-
-    @staticmethod
-    def _actor_priority_key(actor_name, lookup_priority):
-        started_rank = 0 if lookup_priority.get('started') else 1
-        earliest_pending_date = str(lookup_priority.get('earliest_pending_date', '') or '9999-12-31')
-        return (started_rank, earliest_pending_date, str(actor_name or ''))
 
     def _blocked_actor_count(self):
         records = self.database.list_actor_enrichment_records()
