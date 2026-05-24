@@ -114,9 +114,18 @@ class CodePrefixJavtxtEnrichmentService:
             prefix = row.get('prefix', '')
             record = records.get(prefix, {})
             status = record.get('javtxt_enrichment_status', UNENRICHED_STATUS)
-            if status in (UNENRICHED_STATUS, FAILED_STATUS) and self._is_ready_for_javtxt(record):
-                prefixes.append(prefix)
-        return prefixes
+            if status not in (UNENRICHED_STATUS, FAILED_STATUS) or not self._is_ready_for_javtxt(record):
+                continue
+
+            movies = self.database.list_code_prefix_movies(prefix)
+            lookup_priority = self.author_resolver.build_lookup_priority(movies)
+            if int(lookup_priority.get('pending_count', 0) or 0) <= 0:
+                continue
+
+            prefixes.append((self._prefix_priority_key(prefix, lookup_priority), prefix))
+
+        prefixes.sort(key=lambda item: item[0])
+        return [prefix for _, prefix in prefixes]
 
     def _remaining_prefix_video_count(self, prefixes=None):
         target_prefixes = prefixes if prefixes is not None else self._ready_prefixes()
@@ -125,6 +134,12 @@ class CodePrefixJavtxtEnrichmentService:
     def _pending_prefix_video_count(self, prefix):
         movies = self.database.list_code_prefix_movies(prefix)
         return self.author_resolver.count_pending_entries(movies)
+
+    @staticmethod
+    def _prefix_priority_key(prefix, lookup_priority):
+        started_rank = 0 if lookup_priority.get('started') else 1
+        earliest_pending_date = str(lookup_priority.get('earliest_pending_date', '') or '9999-12-31')
+        return (started_rank, earliest_pending_date, str(prefix or ''))
 
     def _blocked_prefix_count(self):
         records = self.database.list_code_prefix_enrichment_records()

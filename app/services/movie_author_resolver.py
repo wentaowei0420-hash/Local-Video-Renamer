@@ -34,7 +34,7 @@ class MovieAuthorResolver:
         return self.enrich_entries_with_details(entries).get('entries', [])
 
     def enrich_entries_with_details(self, entries, max_lookup_count=None):
-        normalized_entries = [self._normalize_entry(entry) for entry in (entries or [])]
+        normalized_entries = self._prepare_entries(entries)
         cached_rows = self._load_cached_rows(normalized_entries)
         pending_video_count_before = self.count_pending_entries(normalized_entries, cached_rows=cached_rows)
         requested_lookup_count = pending_video_count_before
@@ -87,7 +87,7 @@ class MovieAuthorResolver:
         }
 
     def count_pending_entries(self, entries, cached_rows=None):
-        normalized_entries = [self._normalize_entry(entry) for entry in (entries or [])]
+        normalized_entries = self._prepare_entries(entries)
         cached_rows = cached_rows if cached_rows is not None else self._load_cached_rows(normalized_entries)
         pending_count = 0
         for entry in normalized_entries:
@@ -95,10 +95,48 @@ class MovieAuthorResolver:
                 pending_count += 1
         return pending_count
 
+    def build_lookup_priority(self, entries):
+        normalized_entries = self._prepare_entries(entries)
+        cached_rows = self._load_cached_rows(normalized_entries)
+        pending_entries = []
+        started = False
+
+        for entry in normalized_entries:
+            if not self._should_lookup_author(entry):
+                continue
+
+            code = self._normalize_code(entry.get('code', ''))
+            if not code:
+                continue
+
+            cached_row = cached_rows.get(code, {})
+            cached_author = normalize_second_source_actor_text((cached_row or {}).get('javtxt_actors', ''))
+            cached_status = self._normalize_video_status((cached_row or {}).get('javtxt_enrichment_status', ''))
+            if cached_author or (cached_status in TERMINAL_JAVTXT_VIDEO_STATUSES and cached_status != UNENRICHED_STATUS):
+                started = True
+
+            if self._should_attempt_lookup(entry, cached_rows):
+                pending_entries.append(entry)
+
+        earliest_pending_date = ''
+        if pending_entries:
+            earliest_pending_date = str(pending_entries[0].get('release_date', '') or '').strip()
+
+        return {
+            'pending_count': len(pending_entries),
+            'started': started,
+            'earliest_pending_date': earliest_pending_date,
+        }
+
     def _normalize_entry(self, entry):
         updated = dict(entry or {})
         updated['author'] = normalize_second_source_actor_text(updated.get('author', ''))
         return updated
+
+    def _prepare_entries(self, entries):
+        normalized_entries = [self._normalize_entry(entry) for entry in (entries or [])]
+        normalized_entries.sort(key=self._lookup_order_key)
+        return normalized_entries
 
     def _load_cached_rows(self, entries):
         eligible_codes = [
@@ -221,3 +259,8 @@ class MovieAuthorResolver:
     def _normalize_video_status(value):
         text = str(value or '').strip()
         return text or UNENRICHED_STATUS
+
+    def _lookup_order_key(self, entry):
+        release_date = self._parse_release_date((entry or {}).get('release_date', ''))
+        normalized_code = self._normalize_code((entry or {}).get('code', ''))
+        return (release_date or date.max, normalized_code)
