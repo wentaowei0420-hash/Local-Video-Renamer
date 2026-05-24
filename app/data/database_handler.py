@@ -1446,6 +1446,71 @@ class VideoDatabase:
             for row in rows
         }
 
+    def get_javtxt_actor_cache_by_codes(self, codes):
+        normalized_codes = []
+        seen = set()
+        for code in codes or []:
+            normalized_code = str(code or '').strip().upper()
+            if not normalized_code or normalized_code in seen:
+                continue
+            seen.add(normalized_code)
+            normalized_codes.append(normalized_code)
+
+        if not normalized_codes:
+            return {}
+
+        placeholders = ','.join('?' for _ in normalized_codes)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f'''
+                SELECT code, javtxt_actors, javtxt_movie_id, javtxt_url, javtxt_enrichment_status
+                FROM processed_videos
+                WHERE code IN ({placeholders})
+                ''',
+                normalized_codes,
+            )
+            rows = cursor.fetchall()
+
+        return {
+            (row[0] or ''): {
+                'code': row[0] or '',
+                'javtxt_actors': row[1] or '',
+                'javtxt_movie_id': row[2] or '',
+                'javtxt_url': row[3] or '',
+                'javtxt_enrichment_status': row[4] or UNENRICHED_STATUS,
+            }
+            for row in rows
+        }
+
+    def save_javtxt_cache_for_video(self, code, info):
+        normalized_code = str(code or '').strip().upper()
+        if not normalized_code:
+            return 0
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE processed_videos
+                SET javtxt_movie_id = COALESCE(NULLIF(?, ''), javtxt_movie_id),
+                    javtxt_url = COALESCE(NULLIF(?, ''), javtxt_url),
+                    javtxt_title = COALESCE(NULLIF(?, ''), javtxt_title),
+                    javtxt_actors = COALESCE(NULLIF(?, ''), javtxt_actors),
+                    javtxt_enriched_at = CURRENT_TIMESTAMP
+                WHERE code = ?
+                ''',
+                (
+                    str((info or {}).get('javtxt_movie_id', '') or '').strip(),
+                    str((info or {}).get('javtxt_url', '') or '').strip(),
+                    str((info or {}).get('javtxt_title', '') or '').strip(),
+                    str((info or {}).get('javtxt_actors', '') or '').strip(),
+                    normalized_code,
+                ),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
     def import_local_videos(self, records):
         normalized_records = {}
         for record in records or []:

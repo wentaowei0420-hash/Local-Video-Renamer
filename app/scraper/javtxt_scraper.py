@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 from app.core.enrichment_sources import JAVTXT_VIDEO_SOURCE
 from app.scraper.avfan_scraper import import_sync_playwright, wait_for_page_ready
+from app.scraper.browser_window import minimize_browser_window_if_needed
 
 
 JAVTXT_DETAIL_RE = re.compile(r'/v/(\d+)')
@@ -42,6 +43,7 @@ class JavtxtScraper:
         self._browser = self._playwright.chromium.launch(headless=self.headless)
         self._context = self._browser.new_context(locale=self.locale, viewport={'width': 1440, 'height': 1200})
         self._page = self._context.new_page()
+        minimize_browser_window_if_needed(self._page, self.headless)
         return self._page
 
     def close_session(self):

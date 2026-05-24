@@ -3,6 +3,7 @@ import json
 import re
 
 from app.scraper.avfan_code_prefix_scraper import AvfanCodePrefixScraper
+from app.scraper.avfan_actor_scraper import AvfanActorScraper
 from app.scraper.avfan_scraper import (
     AVFAN_MOVIE_RE,
     AvfanScraper,
@@ -76,6 +77,7 @@ def probe_url(url, show_browser=False, max_lines=80, max_entries=20):
             search_code = extract_first_code(lines)
             result['generic_links'] = {
                 'guessed_search_code': search_code,
+                'actor_links': AvfanActorScraper.collect_actor_result_links(page)[:max_entries],
                 'movie_links': collect_search_results(page, search_code or '')[:max_entries],
             }
 

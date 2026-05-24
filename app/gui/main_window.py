@@ -180,13 +180,13 @@ class VidNormApp(QWidget):
         self.btn_video_library = QPushButton('视频库')
         self.btn_video_library.clicked.connect(self.show_video_library)
 
-        self.btn_database = QPushButton('数据库')
+        self.btn_database = QPushButton('数据中心')
         self.btn_database.clicked.connect(self.show_data_center)
 
-        self.btn_view_actors = QPushButton('查看作者库')
+        self.btn_view_actors = QPushButton('作者库')
         self.btn_view_actors.clicked.connect(self.show_actor_viewer)
 
-        self.btn_view_code_prefixes = QPushButton('查看番号库')
+        self.btn_view_code_prefixes = QPushButton('番号库')
         self.btn_view_code_prefixes.clicked.connect(self.show_code_prefix_viewer)
 
         self.btn_scan = QPushButton('扫描本地视频')

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.core.app_config import get_setting
 from app.core.project_paths import AVFAN_PROFILE_DIR, BROWSER_PROFILES_DIR
+from app.scraper.browser_window import minimize_browser_window_if_needed
 from app.scraper.exceptions import HumanVerificationRequiredError
 
 
@@ -187,26 +188,7 @@ class AvfanScraper:
         return fresh_page
 
     def minimize_browser_window_if_needed(self, page):
-        if self.headless or page is None:
-            return
-
-        try:
-            cdp_session = page.context.new_cdp_session(page)
-            window_info = cdp_session.send('Browser.getWindowForTarget')
-            window_id = window_info.get('windowId')
-            if not window_id:
-                return
-            cdp_session.send(
-                'Browser.setWindowBounds',
-                {
-                    'windowId': window_id,
-                    'bounds': {'windowState': 'minimized'},
-                },
-            )
-        except Exception:
-            # Best effort only. If the browser/channel does not expose window
-            # controls through CDP, scraping should continue normally.
-            return
+        minimize_browser_window_if_needed(page, self.headless)
 
     def search_movie_url(self, page, code):
         if is_login_page(page) or is_security_verification_page(page) or not can_search_from_current_page(page):

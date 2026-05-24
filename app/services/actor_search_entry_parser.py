@@ -12,7 +12,7 @@ def parse_actor_search_card(text, href='', actor_name='', page_number=1):
         'actor_name': str(actor_name or '').strip(),
         'code': card.get('code', ''),
         'title': card.get('title', ''),
-        'author': card.get('author', ''),
+        'author': '',
         'title_with_author': card.get('title_with_author', ''),
         'release_date': card.get('release_date', ''),
         'avfan_url': card.get('avfan_url', ''),

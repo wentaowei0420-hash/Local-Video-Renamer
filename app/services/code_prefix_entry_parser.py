@@ -12,14 +12,14 @@ def parse_code_prefix_card(text, href='', prefix='', page_number=1):
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     code = extract_code(raw_text)
     title_line = extract_title_line(lines, code)
-    title, author = split_title_and_author(title_line)
+    title, _author = split_title_and_author(title_line)
     release_date = extract_release_date(raw_text)
 
     return {
         'prefix': str(prefix or '').strip().upper(),
         'code': code,
         'title': title,
-        'author': author,
+        'author': '',
         'title_with_author': title_line,
         'release_date': release_date,
         'avfan_url': str(href or '').strip(),
