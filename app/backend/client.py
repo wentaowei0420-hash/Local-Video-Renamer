@@ -55,6 +55,7 @@ class BackendClient:
         show_browser=False,
         cooldown_before_search=False,
         combo_task_settings=None,
+        batch_mode=False,
     ):
         combo_task_settings = dict(combo_task_settings or {})
         combo_limits = [
@@ -63,12 +64,12 @@ class BackendClient:
             if int((task_settings or {}).get('limit', 0) or 0) > 0
         ]
         effective_limit = max(combo_limits) if combo_limits else int(limit or 1)
-        timeout = max(self.timeout, effective_limit * 300 + 120)
+        timeout = None if batch_mode else max(self.timeout, effective_limit * 300 + 120)
         effective_cooldown = cooldown_before_search or any(
             bool((task_settings or {}).get('cooldown_before_search'))
             for task_settings in combo_task_settings.values()
         )
-        if effective_cooldown:
+        if effective_cooldown and timeout is not None:
             timeout += 180
         return self._post(
             '/database/enrich/combo',
@@ -78,6 +79,7 @@ class BackendClient:
                 'show_browser': show_browser,
                 'cooldown_before_search': cooldown_before_search,
                 'combo_task_settings': combo_task_settings,
+                'batch_mode': batch_mode,
             },
             timeout=timeout,
         )

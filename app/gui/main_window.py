@@ -68,7 +68,16 @@ class ComboEnrichmentWorker(QObject):
     finished = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
-    def __init__(self, backend_client, combo_key, limit, show_browser, cooldown_before_search, combo_task_settings=None):
+    def __init__(
+        self,
+        backend_client,
+        combo_key,
+        limit,
+        show_browser,
+        cooldown_before_search,
+        combo_task_settings=None,
+        batch_mode=False,
+    ):
         super().__init__()
         self.backend_client = backend_client
         self.combo_key = combo_key
@@ -76,6 +85,7 @@ class ComboEnrichmentWorker(QObject):
         self.show_browser = show_browser
         self.cooldown_before_search = cooldown_before_search
         self.combo_task_settings = dict(combo_task_settings or {})
+        self.batch_mode = bool(batch_mode)
 
     def run(self):
         try:
@@ -85,6 +95,7 @@ class ComboEnrichmentWorker(QObject):
                 show_browser=self.show_browser,
                 cooldown_before_search=self.cooldown_before_search,
                 combo_task_settings=self.combo_task_settings,
+                batch_mode=self.batch_mode,
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -424,7 +435,7 @@ class VidNormApp(QWidget):
             )
             return
         if dialog.action_mode == 'combo_batch':
-            self.start_batch_combo_enrichment(values)
+            self.start_combo_batch_plan(values)
             return
 
         self.start_enrichment(
@@ -475,6 +486,7 @@ class VidNormApp(QWidget):
         cooldown_before_search,
         combo_task_settings=None,
         mode='combo_single',
+        batch_mode=False,
     ):
         self.current_enrichment_kind = 'combo'
         self.enrichment_mode = mode
@@ -496,6 +508,7 @@ class VidNormApp(QWidget):
             show_browser,
             cooldown_before_search,
             combo_task_settings=combo_task_settings,
+            batch_mode=batch_mode,
         )
         self.enrichment_worker.moveToThread(self.enrichment_thread)
         self.enrichment_thread.started.connect(self.enrichment_worker.run)
@@ -579,6 +592,35 @@ class VidNormApp(QWidget):
             self.batch_enrichment_config['source_key'],
             mode='batch',
         )
+
+    def start_combo_batch_plan(self, values):
+        combo_task_settings = self._build_combo_task_settings_for_mode(
+            values.get('combo_task_settings', {}),
+            use_batch_limit=True,
+        )
+        effective_limit = self._combo_default_limit(combo_task_settings, fallback=values['batch_limit'])
+        self.batch_enrichment_active = True
+        self.batch_enrichment_config = {
+            'task_kind': 'combo_plan',
+            'combo_key': values['combo_key'],
+            'combo_task_settings': combo_task_settings,
+        }
+        self.batch_enrichment_round = 0
+        self.batch_timer.stop()
+        self.batch_countdown_timer.stop()
+        self.batch_next_run_at = None
+        self.batch_countdown_label.setText('组合批次计划运行中，子任务会在各自批次完成后显示下一批倒计时。')
+        self.update_enrichment_controls()
+        self.start_combo_enrichment(
+            values['combo_key'],
+            effective_limit,
+            values['show_browser'],
+            values['cooldown_before_search'],
+            combo_task_settings=combo_task_settings,
+            mode='combo_batch',
+            batch_mode=True,
+        )
+        self.status_label.setText('组合批次计划运行中，两个子任务会按各自的间隔独立进入下一批。')
 
     @staticmethod
     def _build_combo_task_settings_for_mode(combo_task_settings, use_batch_limit):
@@ -772,6 +814,29 @@ class VidNormApp(QWidget):
                 current_item=str(task_state.get('current_item', '') or ''),
                 message=str(task_state.get('message', '') or ''),
             )
+        self.update_combo_batch_countdown_label(progress)
+
+    def update_combo_batch_countdown_label(self, progress):
+        if self.enrichment_mode != 'combo_batch' or not self.batch_enrichment_active:
+            self.batch_countdown_label.setText('')
+            return
+
+        waiting_segments = []
+        running_segments = []
+        for task_state in (progress.get('subtasks', {}) or {}).values():
+            task_state = dict(task_state or {})
+            task_label = str(task_state.get('task_label', '') or task_state.get('task_key', '子任务'))
+            detail_message = str(task_state.get('message', '') or '').strip()
+            if detail_message.startswith('下一批倒计时'):
+                waiting_segments.append(f'{task_label}: {detail_message}')
+            elif bool(task_state.get('is_running')):
+                running_segments.append(f'{task_label}: 当前批次执行中')
+
+        if waiting_segments or running_segments:
+            self.batch_countdown_label.setText(' | '.join(waiting_segments + running_segments))
+            return
+
+        self.batch_countdown_label.setText('组合批次计划运行中，等待子任务状态更新。')
 
     def hide_combo_subtask_progress(self):
         for combo_subtask_widget in self.combo_subtask_widgets:
@@ -836,6 +901,17 @@ class VidNormApp(QWidget):
             else:
                 self.status_label.setText('')
             QMessageBox.warning(self, '需要人工验证', f'{message}\n\n{summary}')
+            return
+
+        if mode == 'combo_batch':
+            if not self.batch_enrichment_active:
+                self.status_label.setText('已停止组合批次计划。')
+                self.batch_countdown_label.setText('')
+                QMessageBox.information(self, '组合批次计划已停止', summary)
+                return
+
+            self.stop_batch_enrichment('组合批次计划已结束。')
+            QMessageBox.information(self, '组合批次计划已结束', summary)
             return
 
         if is_batch_mode:

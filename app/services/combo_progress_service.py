@@ -44,7 +44,10 @@ class ComboProgressService:
     def finish(self, message='', stopped=False):
         with self._lock:
             self._recalculate_totals_locked()
-            if self._state.get('total_count', 0) > 0 and self._state.get('processed_count', 0) >= self._state.get('total_count', 0):
+            if (
+                self._state.get('total_count', 0) > 0
+                and self._state.get('processed_count', 0) >= self._state.get('total_count', 0)
+            ):
                 self._state['progress_percent'] = 100.0
             self._state.update(
                 {
@@ -78,7 +81,15 @@ class ComboProgressService:
                     'is_running': True,
                     'source_label': str(source_label or ''),
                     'total_count': max(0, int(total_count or 0)),
+                    'processed_count': 0,
+                    'success_count': 0,
+                    'failed_count': 0,
+                    'remaining_count': 0,
+                    'current_item': '',
+                    'progress_percent': 0.0,
                     'message': str(message or ''),
+                    'stopped': False,
+                    'requires_manual_verification': False,
                     'count_unit': str(count_unit or subtask.get('count_unit', '项') or '项'),
                 }
             )
@@ -135,6 +146,18 @@ class ComboProgressService:
             )
             self._recalculate_totals_locked()
 
+    def update_subtask_message(self, task_key, message='', *, is_running=None, current_item=None):
+        with self._lock:
+            subtask = self._state.get('subtasks', {}).get(task_key)
+            if subtask is None:
+                return
+            subtask['message'] = str(message or '')
+            if is_running is not None:
+                subtask['is_running'] = bool(is_running)
+            if current_item is not None:
+                subtask['current_item'] = str(current_item or '')
+            self._recalculate_totals_locked()
+
     def _recalculate_totals_locked(self):
         subtasks = list(self._state.get('subtasks', {}).values())
         total_count = sum(max(0, int(task.get('total_count', 0) or 0)) for task in subtasks)
@@ -145,6 +168,7 @@ class ComboProgressService:
         progress_percent = 0.0
         if total_count > 0:
             progress_percent = round((processed_count / total_count) * 100.0, 1)
+
         current_segments = []
         for task in subtasks:
             label = str(task.get('task_label', '') or '')
@@ -154,6 +178,7 @@ class ComboProgressService:
                 current_segments.append(f'{label}: {current_item}')
             elif task.get('is_running') and message:
                 current_segments.append(f'{label}: {message}')
+
         self._state.update(
             {
                 'total_count': total_count,
@@ -263,11 +288,9 @@ class ComboSubtaskProgressTracker:
         )
 
     def set_message(self, message):
-        self.logger.log(
-            'INFO',
-            '子任务消息更新',
-            task_key=self.task_definition['task_key'],
-            detail_message=str(message or ''),
+        self.combo_progress_service.update_subtask_message(
+            self.task_definition['task_key'],
+            message=message,
         )
 
     def reset(self):

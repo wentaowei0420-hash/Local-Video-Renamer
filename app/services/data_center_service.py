@@ -7,6 +7,7 @@ from app.core.enrichment_status import (
     NO_SEARCH_RESULTS_STATUS,
     UNENRICHED_STATUS,
 )
+from app.core.second_source_actor_text import normalize_second_source_actor_text
 from app.services.code_prefix_library import CodePrefixLibrary
 from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
 
@@ -120,27 +121,15 @@ class DataCenterService:
 
     def _build_javtxt_movie_summary(self, label, movies):
         eligible_movies = [movie for movie in movies if self._is_javtxt_eligible_movie(movie)]
-        cached_rows = self.database.get_javtxt_actor_cache_by_codes(
-            [movie.get('code', '') for movie in eligible_movies]
-        )
-
         total_count = len(eligible_movies)
-        enriched_count = 0
+        enriched_count = sum(
+            1
+            for movie in eligible_movies
+            if normalize_second_source_actor_text((movie or {}).get('author', ''))
+        )
         failed_count = 0
         no_search_count = 0
-
-        for movie in eligible_movies:
-            code = str(movie.get('code', '')).strip().upper()
-            status = str((cached_rows.get(code, {}) or {}).get('javtxt_enrichment_status', '') or '').strip()
-            status = status or UNENRICHED_STATUS
-            if status == ENRICHED_STATUS:
-                enriched_count += 1
-            elif status == FAILED_STATUS:
-                failed_count += 1
-            elif status == NO_SEARCH_RESULTS_STATUS:
-                no_search_count += 1
-
-        pending_count = max(total_count - enriched_count - failed_count - no_search_count, 0)
+        pending_count = max(total_count - enriched_count, 0)
         return {
             'label': label,
             'total_count': total_count,

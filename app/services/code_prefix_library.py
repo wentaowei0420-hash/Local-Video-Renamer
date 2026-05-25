@@ -1,4 +1,10 @@
 import re
+from datetime import datetime
+
+from app.core.enrichment_sources import build_library_enrichment_status_text
+from app.core.enrichment_status import ENRICHED_STATUS, UNENRICHED_STATUS
+from app.core.second_source_actor_text import normalize_second_source_actor_text
+from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
 
 
 SEPARATED_PREFIX_RE = re.compile(r'^\s*([A-Za-z0-9]+?)[\s_-]+\d', re.IGNORECASE)
@@ -65,11 +71,12 @@ class CodePrefixLibrary:
             enrichment = enrichment_records.get(prefix, {})
             movies = self.database.list_code_prefix_movies(prefix)
             earliest_release_date, latest_release_date = self._collect_date_range(movies)
+            enrichment_status = self._build_live_enrichment_status(enrichment, movies)
 
             results.append({
                 'prefix': prefix,
                 'video_count': grouped[prefix],
-                'enrichment_status': enrichment.get('enrichment_status', ''),
+                'enrichment_status': enrichment_status,
                 'avfan_total_pages': enrichment.get('avfan_total_pages', 0),
                 'avfan_total_videos': enrichment.get('avfan_total_videos', 0),
                 'earliest_release_date': earliest_release_date,
@@ -89,3 +96,30 @@ class CodePrefixLibrary:
         if not dates:
             return '', ''
         return dates[0], dates[-1]
+
+    def _build_live_enrichment_status(self, enrichment, movies):
+        avfan_status = str((enrichment or {}).get('avfan_enrichment_status', '') or '').strip()
+        if not avfan_status:
+            avfan_status = str((enrichment or {}).get('enrichment_status', '') or '').strip() or UNENRICHED_STATUS
+
+        eligible_movies = [movie for movie in (movies or []) if self._is_javtxt_eligible_movie(movie)]
+        if eligible_movies and all(
+            normalize_second_source_actor_text((movie or {}).get('author', ''))
+            for movie in eligible_movies
+        ):
+            javtxt_status = ENRICHED_STATUS
+        else:
+            javtxt_status = str((enrichment or {}).get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
+
+        return build_library_enrichment_status_text(avfan_status, javtxt_status)
+
+    @staticmethod
+    def _is_javtxt_eligible_movie(movie):
+        release_date_text = str((movie or {}).get('release_date', '') or '').strip()
+        if not release_date_text:
+            return False
+        try:
+            release_date = datetime.strptime(release_date_text, '%Y-%m-%d').date()
+        except ValueError:
+            return False
+        return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE

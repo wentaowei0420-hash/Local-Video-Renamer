@@ -108,6 +108,7 @@ def make_handler(service):
                     show_browser=bool(body.get('show_browser')),
                     cooldown_before_search=bool(body.get('cooldown_before_search')),
                     combo_task_settings=body.get('combo_task_settings', {}),
+                    batch_mode=bool(body.get('batch_mode')),
                 )
             if method == 'GET' and path == '/database/enrich/progress':
                 return service.get_enrichment_progress()

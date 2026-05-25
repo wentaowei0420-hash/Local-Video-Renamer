@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from threading import Event, Lock, Thread
 
 from app.core.combo_enrichment import get_combo_label, get_combo_tasks, normalize_combo_key
@@ -22,7 +23,15 @@ class ComboEnrichmentService:
         self.internal_stop_event = Event()
         self._result_lock = Lock()
 
-    def run(self, combo_key, limit, show_browser=False, cooldown_before_search=False, combo_task_settings=None):
+    def run(
+        self,
+        combo_key,
+        limit,
+        show_browser=False,
+        cooldown_before_search=False,
+        combo_task_settings=None,
+        batch_mode=False,
+    ):
         normalized_combo_key = normalize_combo_key(combo_key)
         combo_label = get_combo_label(normalized_combo_key)
         task_definitions = get_combo_tasks(normalized_combo_key)
@@ -47,6 +56,8 @@ class ComboEnrichmentService:
             effective_limit,
             log_path=str(self.logger.log_path),
         )
+        if batch_mode:
+            self.combo_progress_service.set_message('组合批次计划运行中，子任务会按各自间隔循环执行。')
         self.logger.log(
             'INFO',
             '组合任务开始执行',
@@ -55,15 +66,16 @@ class ComboEnrichmentService:
             limit=effective_limit,
             show_browser=bool(show_browser),
             cooldown_before_search=bool(cooldown_before_search),
+            batch_mode=bool(batch_mode),
         )
 
         results_by_task = {}
         worker_threads = []
-
         for task_definition in task_definitions:
             task_config = dict(task_run_configs.get(task_definition['task_key'], {}))
+            target = self._run_subtask_batch_loop if batch_mode else self._run_subtask_once
             worker_thread = Thread(
-                target=self._run_subtask,
+                target=target,
                 args=(task_definition, task_config, results_by_task),
                 daemon=True,
             )
@@ -73,8 +85,15 @@ class ComboEnrichmentService:
         for worker_thread in worker_threads:
             worker_thread.join()
 
-        result = self._build_result(normalized_combo_key, combo_label, results_by_task)
-        finish_message = result.get('message', '') or '组合任务已完成。'
+        result = self._build_result(
+            normalized_combo_key,
+            combo_label,
+            results_by_task,
+            batch_mode=batch_mode,
+        )
+        finish_message = result.get('message', '') or (
+            '组合批次计划已结束。' if batch_mode else '组合任务已完成。'
+        )
         self.combo_progress_service.finish(
             message=finish_message,
             stopped=result.get('stopped', False),
@@ -89,13 +108,88 @@ class ComboEnrichmentService:
             remaining_count=result['remaining_count'],
             stopped=result['stopped'],
             requires_manual_verification=result['requires_manual_verification'],
+            batch_mode=bool(batch_mode),
         )
         return result
 
     def request_stop(self):
         self.internal_stop_event.set()
 
-    def _run_subtask(self, task_definition, task_config, results_by_task):
+    def _run_subtask_once(self, task_definition, task_config, results_by_task):
+        result = self._execute_subtask(task_definition, task_config)
+        with self._result_lock:
+            results_by_task[task_definition['task_key']] = dict(result)
+
+    def _run_subtask_batch_loop(self, task_definition, task_config, results_by_task):
+        task_key = task_definition['task_key']
+        task_label = task_definition['task_label']
+        interval_minutes = max(1, int((task_config or {}).get('batch_interval_minutes', 1) or 1))
+        interval_seconds = interval_minutes * 60
+        batch_index = 0
+        aggregated_result = self._build_empty_task_result(task_definition)
+
+        while not self._should_stop():
+            batch_index += 1
+            self.logger.log(
+                'INFO',
+                '子任务批次开始',
+                task_key=task_key,
+                task_label=task_label,
+                batch_index=batch_index,
+                limit=int((task_config or {}).get('limit', 1) or 1),
+                interval_minutes=interval_minutes,
+            )
+            result = self._execute_subtask(task_definition, task_config)
+            aggregated_result = self._merge_task_result(
+                task_definition,
+                aggregated_result,
+                result,
+                batch_index,
+            )
+            with self._result_lock:
+                results_by_task[task_key] = dict(aggregated_result)
+
+            if result.get('requires_manual_verification'):
+                self.internal_stop_event.set()
+                break
+
+            if self._should_stop() or result.get('stopped'):
+                break
+
+            self.logger.log(
+                'INFO',
+                '子任务进入等待下一批',
+                task_key=task_key,
+                task_label=task_label,
+                batch_index=batch_index,
+                interval_minutes=interval_minutes,
+            )
+            for remaining_seconds in range(interval_seconds, 0, -1):
+                if self._should_stop():
+                    break
+                self.combo_progress_service.update_subtask_message(
+                    task_key,
+                    message=f'下一批倒计时 {self._format_seconds(remaining_seconds)}',
+                    is_running=False,
+                    current_item='',
+                )
+                time.sleep(1)
+            if self._should_stop():
+                break
+
+        final_message = aggregated_result.get('message', '') or ''
+        if self._should_stop() and not aggregated_result.get('requires_manual_verification'):
+            final_message = final_message or '组合批次计划已停止。'
+        self.combo_progress_service.update_subtask_message(
+            task_key,
+            message=final_message,
+            is_running=False,
+            current_item='',
+        )
+        with self._result_lock:
+            results_by_task[task_key] = dict(aggregated_result)
+
+    def _execute_subtask(self, task_definition, task_config):
         task_key = task_definition['task_key']
         task_label = task_definition['task_label']
         limit = max(1, int((task_config or {}).get('limit', 1) or 1))
@@ -165,9 +259,7 @@ class ComboEnrichmentService:
         )
         if result.get('requires_manual_verification'):
             self.internal_stop_event.set()
-
-        with self._result_lock:
-            results_by_task[task_key] = dict(result)
+        return result
 
     def _build_task_runner(self, task_definition, show_browser, cooldown_before_search, progress_tracker):
         task_key = task_definition['task_key']
@@ -240,6 +332,7 @@ class ComboEnrichmentService:
                 'cooldown_before_search': bool(
                     current_settings.get('cooldown_before_search', default_cooldown_before_search)
                 ),
+                'batch_interval_minutes': max(1, int(current_settings.get('batch_interval_minutes', 1) or 1)),
             }
         return normalized
 
@@ -287,7 +380,51 @@ class ComboEnrichmentService:
         return self.internal_stop_event.is_set() or bool(self.external_should_stop())
 
     @staticmethod
-    def _build_result(combo_key, combo_label, results_by_task):
+    def _build_empty_task_result(task_definition):
+        return {
+            'task_label': task_definition['task_label'],
+            'entity_label': task_definition['task_label'],
+            'count_unit': task_definition.get('count_unit', '项'),
+            'processed_count': 0,
+            'success_count': 0,
+            'failed_count': 0,
+            'remaining_count': 0,
+            'stopped': False,
+            'requires_manual_verification': False,
+            'message': '',
+            'batch_count': 0,
+            'last_batch_processed_count': 0,
+            'last_batch_success_count': 0,
+            'last_batch_failed_count': 0,
+        }
+
+    @staticmethod
+    def _merge_task_result(task_definition, aggregated_result, latest_result, batch_index):
+        merged = dict(aggregated_result or {})
+        latest = dict(latest_result or {})
+        merged.update(
+            {
+                'task_label': latest.get('task_label') or merged.get('task_label') or task_definition['task_label'],
+                'entity_label': latest.get('entity_label') or merged.get('entity_label') or task_definition['task_label'],
+                'count_unit': latest.get('count_unit') or merged.get('count_unit') or task_definition.get('count_unit', '项'),
+                'processed_count': int(merged.get('processed_count', 0) or 0) + int(latest.get('processed_count', 0) or 0),
+                'success_count': int(merged.get('success_count', 0) or 0) + int(latest.get('success_count', 0) or 0),
+                'failed_count': int(merged.get('failed_count', 0) or 0) + int(latest.get('failed_count', 0) or 0),
+                'remaining_count': int(latest.get('remaining_count', merged.get('remaining_count', 0)) or 0),
+                'stopped': bool(latest.get('stopped')) or bool(merged.get('stopped')),
+                'requires_manual_verification': bool(latest.get('requires_manual_verification'))
+                or bool(merged.get('requires_manual_verification')),
+                'message': str(latest.get('message', '') or merged.get('message', '') or ''),
+                'batch_count': max(batch_index, int(merged.get('batch_count', 0) or 0)),
+                'last_batch_processed_count': int(latest.get('processed_count', 0) or 0),
+                'last_batch_success_count': int(latest.get('success_count', 0) or 0),
+                'last_batch_failed_count': int(latest.get('failed_count', 0) or 0),
+            }
+        )
+        return merged
+
+    @staticmethod
+    def _build_result(combo_key, combo_label, results_by_task, batch_mode=False):
         ordered_results = {
             task_definition['task_key']: dict(results_by_task.get(task_definition['task_key'], {}))
             for task_definition in get_combo_tasks(combo_key)
@@ -300,7 +437,7 @@ class ComboEnrichmentService:
             bool(result.get('requires_manual_verification'))
             for result in ordered_results.values()
         )
-        stopped = any(bool(result.get('stopped')) for result in ordered_results.values())
+        stopped = any(bool(result.get('stopped')) for result in ordered_results.values()) or batch_mode
         message_segments = [
             str(result.get('message', '') or '').strip()
             for result in ordered_results.values()
@@ -309,6 +446,8 @@ class ComboEnrichmentService:
         message = ' | '.join(message_segments)
         if requires_manual_verification and not message:
             message = '组合任务中检测到 AVFan 人机验证。'
+        elif batch_mode and not message:
+            message = '组合批次计划已停止。'
         return {
             'task_kind': 'combo',
             'combo_key': combo_key,
@@ -325,3 +464,12 @@ class ComboEnrichmentService:
             'subtask_results': ordered_results,
             'results': [],
         }
+
+    @staticmethod
+    def _format_seconds(total_seconds):
+        total_seconds = max(0, int(total_seconds or 0))
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+        return f'{minutes:02d}:{seconds:02d}'

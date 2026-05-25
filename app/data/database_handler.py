@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from app.core.enrichment_status import (
@@ -19,6 +20,7 @@ from app.core.enrichment_sources import (
 from app.core.second_source_actor_text import normalize_second_source_actor_text
 from app.core.project_paths import DATABASE_FILE
 from app.services.actor_identifier import IGNORED_ACTOR_NAMES, is_ignored_actor_name
+from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
 
 
 def join_values(value):
@@ -354,18 +356,29 @@ class VideoDatabase:
                     ORDER BY a.name
                 ''', (UNENRICHED_STATUS,))
 
-            return [
+            rows = cursor.fetchall()
+
+        enrichment_records = self.list_actor_enrichment_records()
+        results = []
+        for row in rows:
+            actor_name = row[0] or ''
+            if is_ignored_actor_name(actor_name):
+                continue
+            record = enrichment_records.get(actor_name, {})
+            results.append(
                 {
-                    'name': row[0] or '',
+                    'name': actor_name,
                     'birthday': row[1] or '',
                     'age': row[2] or '',
                     'matched': bool(row[3]),
                     'actor_id': row[4] or '',
-                    'enrichment_status': row[5] or UNENRICHED_STATUS,
+                    'enrichment_status': self._build_live_actor_enrichment_status(
+                        record,
+                        self.list_actor_movies(actor_name),
+                    ),
                 }
-                for row in cursor.fetchall()
-                if not is_ignored_actor_name(row[0] or '')
-            ]
+            )
+        return results
 
     def list_videos(self, search_text=''):
         """读取数据库台账，必要时按编号/标题/演员筛选。"""
@@ -574,6 +587,33 @@ class VideoDatabase:
             ''',
             (combined_status, latest_error, latest_at, actor_name),
         )
+
+    def _build_live_actor_enrichment_status(self, enrichment, movies):
+        avfan_status = str((enrichment or {}).get('avfan_enrichment_status', '') or '').strip()
+        if not avfan_status:
+            avfan_status = str((enrichment or {}).get('enrichment_status', '') or '').strip() or UNENRICHED_STATUS
+
+        eligible_movies = [movie for movie in (movies or []) if self._is_javtxt_eligible_movie(movie)]
+        if eligible_movies and all(
+            normalize_second_source_actor_text((movie or {}).get('author', ''))
+            for movie in eligible_movies
+        ):
+            javtxt_status = ENRICHED_STATUS
+        else:
+            javtxt_status = str((enrichment or {}).get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
+
+        return build_library_enrichment_status_text(avfan_status, javtxt_status)
+
+    @staticmethod
+    def _is_javtxt_eligible_movie(movie):
+        release_date_text = str((movie or {}).get('release_date', '') or '').strip()
+        if not release_date_text:
+            return False
+        try:
+            release_date = datetime.strptime(release_date_text, '%Y-%m-%d').date()
+        except ValueError:
+            return False
+        return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE
 
     def add_path(self, folder_path):
         """写入一个路径库记录，已存在时保持一条记录。"""

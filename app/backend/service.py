@@ -184,7 +184,15 @@ class BackendService:
         finally:
             self._end_enrichment_task()
 
-    def enrich_combo(self, combo_key, limit, show_browser=False, cooldown_before_search=False, combo_task_settings=None):
+    def enrich_combo(
+        self,
+        combo_key,
+        limit,
+        show_browser=False,
+        cooldown_before_search=False,
+        combo_task_settings=None,
+        batch_mode=False,
+    ):
         normalized_combo_key = normalize_combo_key(combo_key)
         combo_label = get_combo_label(normalized_combo_key)
         self._begin_enrichment_task('combo')
@@ -202,6 +210,7 @@ class BackendService:
                 show_browser=show_browser,
                 cooldown_before_search=cooldown_before_search,
                 combo_task_settings=combo_task_settings,
+                batch_mode=batch_mode,
             )
             result['log_path'] = str(logger.log_path)
             return result

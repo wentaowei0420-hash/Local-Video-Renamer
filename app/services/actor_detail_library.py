@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 
-from app.core.enrichment_status import ENRICHED_STATUS, UNENRICHED_STATUS
+from app.core.second_source_actor_text import normalize_second_source_actor_text
 from app.services.actor_identifier import split_actor_names
 from app.services.code_prefix_library import extract_code_prefix
 from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
@@ -73,16 +73,11 @@ class ActorDetailLibrary:
         return [row for row in (rows or []) if self._is_eligible_movie(row)]
 
     def _count_enriched_eligible_movies(self, movies):
-        cached_rows = self.database.get_javtxt_actor_cache_by_codes(
-            [movie.get('code', '') for movie in (movies or [])]
+        return sum(
+            1
+            for movie in (movies or [])
+            if normalize_second_source_actor_text((movie or {}).get('author', ''))
         )
-        enriched_count = 0
-        for movie in movies or []:
-            code = str(movie.get('code', '') or '').strip().upper()
-            status = str((cached_rows.get(code, {}) or {}).get('javtxt_enrichment_status', '') or '').strip()
-            if (status or UNENRICHED_STATUS) == ENRICHED_STATUS:
-                enriched_count += 1
-        return enriched_count
 
     def _build_prefix_distribution(self, rows):
         grouped = {}
