@@ -1,10 +1,12 @@
 import re
-from datetime import datetime
 
+from app.core.javtxt_video_state import (
+    build_javtxt_library_status,
+    is_javtxt_eligible_movie,
+    summarize_javtxt_movies,
+)
 from app.core.enrichment_sources import build_library_enrichment_status_text
-from app.core.enrichment_status import ENRICHED_STATUS, UNENRICHED_STATUS
-from app.core.second_source_actor_text import normalize_second_source_actor_text
-from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
+from app.core.enrichment_status import UNENRICHED_STATUS
 
 
 SEPARATED_PREFIX_RE = re.compile(r'^\s*([A-Za-z0-9]+?)[\s_-]+\d', re.IGNORECASE)
@@ -102,28 +104,11 @@ class CodePrefixLibrary:
         if not avfan_status:
             avfan_status = str((enrichment or {}).get('enrichment_status', '') or '').strip() or UNENRICHED_STATUS
 
-        eligible_movies = [movie for movie in (movies or []) if self._is_javtxt_eligible_movie(movie)]
         javtxt_record_status = str((enrichment or {}).get('javtxt_enrichment_status', '')).strip() or UNENRICHED_STATUS
-        if eligible_movies and all(self._has_javtxt_author(movie) for movie in eligible_movies):
-            javtxt_status = ENRICHED_STATUS
-        elif javtxt_record_status == ENRICHED_STATUS:
-            javtxt_status = UNENRICHED_STATUS
-        else:
-            javtxt_status = javtxt_record_status
+        cache_rows = self.database.get_javtxt_actor_cache_by_codes(
+            [str((movie or {}).get('code', '') or '').strip().upper() for movie in (movies or [])]
+        )
+        summary = summarize_javtxt_movies(movies, cache_rows=cache_rows)
+        javtxt_status = javtxt_record_status if summary['total_count'] <= 0 else build_javtxt_library_status(movies, cache_rows=cache_rows)
 
         return build_library_enrichment_status_text(avfan_status, javtxt_status)
-
-    @staticmethod
-    def _has_javtxt_author(movie):
-        return bool(normalize_second_source_actor_text((movie or {}).get('author', '')))
-
-    @staticmethod
-    def _is_javtxt_eligible_movie(movie):
-        release_date_text = str((movie or {}).get('release_date', '') or '').strip()
-        if not release_date_text:
-            return False
-        try:
-            release_date = datetime.strptime(release_date_text, '%Y-%m-%d').date()
-        except ValueError:
-            return False
-        return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE

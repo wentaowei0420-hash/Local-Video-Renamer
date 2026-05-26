@@ -1,10 +1,7 @@
-from datetime import datetime
-
+from app.core.javtxt_video_state import summarize_javtxt_movies
 from app.core.enrichment_sources import AVFAN_VIDEO_SOURCE, JAVTXT_VIDEO_SOURCE, get_video_enrichment_source_label
 from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
-from app.core.second_source_actor_text import normalize_second_source_actor_text
 from app.services.code_prefix_library import CodePrefixLibrary
-from app.services.movie_author_resolver import JAVTXT_AUTHOR_MIN_RELEASE_DATE
 
 
 class DataCenterService:
@@ -36,19 +33,22 @@ class DataCenterService:
                 },
             },
         }
-
     def _build_video_source_summary(self, source_key):
         summary = self.database.get_video_enrichment_summary(source_key)
         total_count = int(summary.get('total_count', 0) or 0)
         enriched_count = int(summary.get('enriched_count', 0) or 0)
-        pending_count = int(summary.get('unenriched_count', 0) or 0)
-        return {
+        pending_count = int(summary.get('pending_count', summary.get('unenriched_count', 0)) or 0)
+        result = {
             'label': f'视频库 · {get_video_enrichment_source_label(source_key)}',
             'total_count': total_count,
             'enriched_count': enriched_count,
             'pending_count': pending_count,
             'progress_percent': _build_progress_percent(enriched_count, total_count),
         }
+        if source_key == JAVTXT_VIDEO_SOURCE:
+            result['failed_count'] = int(summary.get('failed_count', 0) or 0)
+            result['no_search_count'] = int(summary.get('no_search_count', 0) or 0)
+        return result
 
     def _build_code_prefix_source_summary(self, source_key):
         if source_key == JAVTXT_VIDEO_SOURCE:
@@ -119,30 +119,25 @@ class DataCenterService:
         }
 
     def _build_javtxt_library_video_summary(self, label, item_keys, list_movies, records):
-        total_count = 0
-        enriched_count = 0
+        del records
+        eligible_movies = []
 
         for item_key in item_keys:
             movies = list_movies(item_key)
-            eligible_movies = [movie for movie in movies if self._is_javtxt_eligible_movie(movie)]
-            if not eligible_movies:
-                continue
+            eligible_movies.extend(movies)
 
-            eligible_count = len(eligible_movies)
-            total_count += eligible_count
-
-            if self._all_movies_have_javtxt_author(eligible_movies):
-                enriched_count += eligible_count
-
-        pending_count = max(total_count - enriched_count, 0)
+        cache_rows = self.database.get_javtxt_actor_cache_by_codes(
+            [str((movie or {}).get('code', '') or '').strip().upper() for movie in eligible_movies]
+        )
+        summary = summarize_javtxt_movies(eligible_movies, cache_rows=cache_rows)
         return {
             'label': label,
-            'total_count': total_count,
-            'enriched_count': enriched_count,
-            'pending_count': pending_count,
-            'failed_count': 0,
-            'no_search_count': 0,
-            'progress_percent': _build_progress_percent(enriched_count, total_count),
+            'total_count': summary['total_count'],
+            'enriched_count': summary['enriched_count'],
+            'pending_count': summary['pending_count'],
+            'failed_count': summary['failed_count'],
+            'no_search_count': summary['no_search_count'],
+            'progress_percent': _build_progress_percent(summary['enriched_count'], summary['total_count']),
             'count_label': '已补全视频',
             'pending_label': '待补全视频',
         }
@@ -151,28 +146,6 @@ class DataCenterService:
     def _get_source_status(record, source_key):
         key = 'javtxt_enrichment_status' if source_key == JAVTXT_VIDEO_SOURCE else 'avfan_enrichment_status'
         return str((record or {}).get(key, '') or '').strip() or UNENRICHED_STATUS
-
-    @staticmethod
-    def _all_movies_have_javtxt_author(movies):
-        return bool(movies) and all(
-            normalize_second_source_actor_text((movie or {}).get('author', ''))
-            for movie in (movies or [])
-        )
-
-    @staticmethod
-    def _is_javtxt_eligible_movie(movie):
-        code = str((movie or {}).get('code', '') or '').strip().upper()
-        if not code:
-            return False
-        release_date_text = str((movie or {}).get('release_date', '') or '').strip()
-        if not release_date_text:
-            return False
-        try:
-            release_date = datetime.strptime(release_date_text, '%Y-%m-%d').date()
-        except ValueError:
-            return False
-        return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE
-
 
 def _build_progress_percent(enriched_count, total_count):
     if total_count <= 0:

@@ -24,6 +24,11 @@ _MISSING_ACTOR_TEXTS = {
     '未公開',
 }
 
+_UNPUBLISHED_ACTOR_TEXTS = {
+    '未公开',
+    '未公開',
+}
+
 
 def normalize_second_source_actor_text(value):
     text = _normalize_spacing(value)
@@ -35,6 +40,14 @@ def normalize_second_source_actor_text(value):
     if not _SUBSTANTIVE_ACTOR_TEXT_RE.search(text):
         return ''
     return text
+
+
+def is_unpublished_actor_text(value):
+    text = _normalize_spacing(value)
+    if not text:
+        return False
+    compact = re.sub(r'[\s\u3000,，、/;；|]+', '', text)
+    return compact in _UNPUBLISHED_ACTOR_TEXTS
 
 
 def _normalize_spacing(value):

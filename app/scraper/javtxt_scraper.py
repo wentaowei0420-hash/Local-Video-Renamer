@@ -8,7 +8,10 @@ from app.core.runtime_config import (
     get_scraper_browser_channel,
     get_scraper_locale,
 )
-from app.core.second_source_actor_text import normalize_second_source_actor_text
+from app.core.second_source_actor_text import (
+    is_unpublished_actor_text,
+    normalize_second_source_actor_text,
+)
 from app.scraper.avfan_scraper import import_sync_playwright, wait_for_page_ready
 from app.scraper.browser_window import minimize_browser_window_if_needed
 
@@ -156,7 +159,7 @@ class JavtxtScraper:
         final_url = page.url or ''
         movie_id = extract_javtxt_movie_id(final_url)
         title = extract_title(page, lines, requested_code)
-        actors_text = extract_actors_text(lines)
+        raw_actors_text, actors_text = extract_actors_text_details(lines)
         release_date = extract_detail_value(lines, RELEASE_DATE_LABELS)
         maker = extract_detail_value(lines, MAKER_LABELS)
         publisher = extract_detail_value(lines, PUBLISHER_LABELS)
@@ -169,16 +172,19 @@ class JavtxtScraper:
             movie_id=movie_id,
             title=title,
             actors_text=actors_text,
+            raw_actors_text=raw_actors_text,
         )
         return {
             'code': requested_code,
             'title': title,
             'author': actors_text,
+            'author_raw': raw_actors_text,
             'release_date': release_date,
             'maker': maker,
             'publisher': publisher,
             'javtxt_title': title,
             'javtxt_actors': actors_text,
+            'javtxt_actors_raw': raw_actors_text,
             'javtxt_tags': tags_text,
             'javtxt_movie_id': movie_id,
             'javtxt_url': final_url,
@@ -244,13 +250,14 @@ def clean_title(text, requested_code):
     return value
 
 
-def extract_actors_text(lines):
+def extract_actors_text_details(lines):
     for labels in (PRIMARY_ACTOR_SECTION_LABELS, SECONDARY_ACTOR_SECTION_LABELS):
         actor_lines = extract_actor_section_lines(lines, labels)
-        actor_text = normalize_second_source_actor_text(' '.join(actor_lines))
-        if actor_text:
-            return actor_text
-    return ''
+        raw_actor_text = normalize_actor_source_text(' '.join(actor_lines))
+        actor_text = normalize_second_source_actor_text(raw_actor_text)
+        if actor_text or is_unpublished_actor_text(raw_actor_text):
+            return raw_actor_text, actor_text
+    return '', ''
 
 
 def extract_actor_section_lines(lines, labels):
@@ -261,9 +268,9 @@ def extract_actor_section_lines(lines, labels):
             continue
 
         values = []
-        inline_actor_text = normalize_second_source_actor_text(inline_value)
-        if inline_actor_text:
-            values.append(inline_actor_text)
+        inline_text = normalize_actor_source_text(inline_value)
+        if normalize_second_source_actor_text(inline_text) or is_unpublished_actor_text(inline_text):
+            values.append(inline_text)
             return values
 
         for next_index in range(index + 1, len(lines)):
@@ -275,8 +282,8 @@ def extract_actor_section_lines(lines, labels):
                 break
             if is_next_section_label(value):
                 break
-            normalized_value = normalize_second_source_actor_text(value)
-            if normalized_value:
+            normalized_value = normalize_actor_source_text(value)
+            if normalize_second_source_actor_text(normalized_value) or is_unpublished_actor_text(normalized_value):
                 values.append(normalized_value)
             else:
                 break
@@ -285,6 +292,10 @@ def extract_actor_section_lines(lines, labels):
         if matched_label:
             return []
     return []
+
+
+def normalize_actor_source_text(value):
+    return ' '.join(str(value or '').replace('\u3000', ' ').split()).strip()
 
 
 def extract_detail_value(lines, labels):

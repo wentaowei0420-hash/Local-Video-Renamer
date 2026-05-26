@@ -66,12 +66,12 @@ class DataCenterWindow(QDialog):
 
         self.video_avfan_card.set_summary(
             video_summary.get(AVFAN_VIDEO_SOURCE, {}),
-            show_terminal_details=False,
+            show_terminal_details=True,
             live_progress=live_progress_map.get((VIDEO_LIBRARY_TARGET, AVFAN_VIDEO_SOURCE)),
         )
         self.video_javtxt_card.set_summary(
             video_summary.get(JAVTXT_VIDEO_SOURCE, {}),
-            show_terminal_details=False,
+            show_terminal_details=True,
             live_progress=live_progress_map.get((VIDEO_LIBRARY_TARGET, JAVTXT_VIDEO_SOURCE)),
         )
         self.code_prefix_avfan_card.set_summary(
