@@ -64,6 +64,8 @@ def make_handler(service):
                 return service.list_videos_requiring_manual_category()
             if method == 'POST' and path == '/database/videos/manual-category/stage':
                 return service.stage_video_category(body.get('code'), body.get('category'))
+            if method == 'POST' and path == '/database/videos/manual-category/stage/batch':
+                return service.stage_video_categories(body.get('entries', []))
             if method == 'POST' and path == '/database/videos/manual-category/sync':
                 return service.sync_staged_video_categories()
             if method == 'POST' and path == '/database/videos/category':

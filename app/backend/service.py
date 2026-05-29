@@ -115,6 +115,10 @@ class BackendService:
         self.ensure_database_loaded()
         return self.db.stage_video_category(code, category)
 
+    def stage_video_categories(self, entries):
+        self.ensure_database_loaded()
+        return self.db.stage_video_categories(entries)
+
     def sync_staged_video_categories(self):
         self.ensure_database_loaded()
         return self.db.sync_staged_video_categories()

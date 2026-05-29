@@ -354,12 +354,24 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         layout = QVBoxLayout(self)
         top_layout = QHBoxLayout()
         self.summary_label = QLabel(tr('video.category.summary', count=0, staged_count=0))
+        self.btn_select_all = QPushButton(tr('video.category.select_all'))
+        self.btn_select_all.clicked.connect(self.select_current_page_rows)
+        self.btn_batch_single = QPushButton(tr('video.category.batch_single'))
+        self.btn_batch_single.clicked.connect(lambda: self.batch_stage_selected_rows(VIDEO_CATEGORY_SINGLE))
+        self.btn_batch_co_star = QPushButton(tr('video.category.batch_co_star'))
+        self.btn_batch_co_star.clicked.connect(lambda: self.batch_stage_selected_rows(VIDEO_CATEGORY_CO_STAR))
+        self.btn_batch_collection = QPushButton(tr('video.category.batch_collection'))
+        self.btn_batch_collection.clicked.connect(lambda: self.batch_stage_selected_rows(VIDEO_CATEGORY_COLLECTION))
         self.btn_sync = QPushButton(tr('video.category.sync'))
         self.btn_sync.clicked.connect(self.sync_staged_categories)
         self.btn_refresh = QPushButton(tr('video.category.refresh'))
         self.btn_refresh.clicked.connect(self.load_data)
         top_layout.addWidget(self.summary_label)
         top_layout.addStretch()
+        top_layout.addWidget(self.btn_select_all)
+        top_layout.addWidget(self.btn_batch_single)
+        top_layout.addWidget(self.btn_batch_co_star)
+        top_layout.addWidget(self.btn_batch_collection)
         top_layout.addWidget(self.btn_sync)
         top_layout.addWidget(self.btn_refresh)
 
@@ -377,11 +389,12 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
         self.table.setWordWrap(False)
         self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.selectionModel().selectionChanged.connect(self._update_batch_button_state)
 
         category_delegate = CategorySelectionDelegate(self.table)
         self.table.setItemDelegateForColumn(COLUMN_SINGLE, category_delegate)
@@ -422,6 +435,10 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         layout.addLayout(bottom_layout)
         self.set_async_busy_widgets([
             self.btn_refresh,
+            self.btn_select_all,
+            self.btn_batch_single,
+            self.btn_batch_co_star,
+            self.btn_batch_collection,
             self.btn_sync,
             self.page_size_combo,
             self.btn_prev_page,
@@ -459,6 +476,37 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         if not QDesktopServices.openUrl(QUrl(target_url)):
             QMessageBox.warning(self, tr('video.category.open_failed_title'), tr('video.category.open_failed_message', target_url=target_url))
 
+    def select_current_page_rows(self):
+        if self.is_async_task_running() or self.model.page_count() <= 0:
+            return
+        self.table.selectAll()
+        self._update_batch_button_state()
+
+    def batch_stage_selected_rows(self, category):
+        if self.is_async_task_running():
+            return
+        selected_codes = self.selected_codes()
+        if not selected_codes:
+            QMessageBox.information(self, tr('common.no_selection'), tr('video.category.batch_select_first'))
+            return
+
+        entries = [
+            {
+                'code': code,
+                'category': category,
+            }
+            for code in selected_codes
+        ]
+        self.start_async_task(
+            lambda: {
+                **self.backend_client.stage_video_categories(entries),
+                'codes': selected_codes,
+                'category': category,
+            },
+            self._on_batch_stage_finished,
+            tr('common.save_failed'),
+        )
+
     def _on_stage_index_clicked(self, index):
         if self.is_async_task_running():
             return
@@ -488,8 +536,30 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         code = str((result or {}).get('code', '') or '').strip().upper()
         if code:
             self.model.remove_code(code)
+        self.table.clearSelection()
         self.staged_count = int((result or {}).get('staged_count', self.staged_count) or 0)
         self._update_summary_label()
+
+    def _on_batch_stage_finished(self, result):
+        codes = [
+            str(code or '').strip().upper()
+            for code in ((result or {}).get('codes', []) or [])
+            if str(code or '').strip()
+        ]
+        for code in codes:
+            self.model.remove_code(code)
+        self.table.clearSelection()
+        self.staged_count = int((result or {}).get('staged_count', self.staged_count) or 0)
+        self._update_summary_label()
+        QMessageBox.information(
+            self,
+            tr('video.category.batch_completed_title'),
+            tr(
+                'video.category.batch_completed_message',
+                count=len(codes),
+                category=str((result or {}).get('category', '') or '').strip(),
+            ),
+        )
 
     def _on_sync_finished(self, result):
         sync_result = dict((result or {}).get('sync_result', {}) or {})
@@ -537,6 +607,7 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         )
         self._update_navigation_state()
         self._update_sync_button_state()
+        self._update_batch_button_state()
         self.table.viewport().update()
 
     def _update_navigation_state(self):
@@ -547,10 +618,34 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
     def _update_sync_button_state(self):
         self.btn_sync.setEnabled((not self.is_async_task_running()) and self.staged_count > 0)
 
+    def _update_batch_button_state(self, *_args):
+        busy = self.is_async_task_running()
+        has_rows = self.model.page_count() > 0
+        has_selection = len(self.selected_codes()) > 0
+        self.btn_select_all.setEnabled((not busy) and has_rows)
+        self.btn_batch_single.setEnabled((not busy) and has_selection)
+        self.btn_batch_co_star.setEnabled((not busy) and has_selection)
+        self.btn_batch_collection.setEnabled((not busy) and has_selection)
+
+    def selected_codes(self):
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return []
+        selected_codes = []
+        seen = set()
+        for index in selection_model.selectedRows():
+            code = str(index.data(CODE_ROLE) or '').strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            selected_codes.append(code)
+        return selected_codes
+
     def _cleanup_async_task_thread(self):
         super()._cleanup_async_task_thread()
         self._update_navigation_state()
         self._update_sync_button_state()
+        self._update_batch_button_state()
         self.table.viewport().update()
 
     def closeEvent(self, event):

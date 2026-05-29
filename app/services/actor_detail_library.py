@@ -25,8 +25,9 @@ class ActorDetailLibrary:
 
         actor_row = self._find_actor(actor_name)
         local_videos = self._find_local_actor_videos(actor_name)
-        web_movies = self.database.list_actor_movies(actor_name)
-        eligible_web_movies = self._filter_eligible_movies(web_movies)
+        raw_web_movies = self.database.list_actor_movies(actor_name)
+        web_movies = self._filter_eligible_movies(raw_web_movies)
+        eligible_web_movies = list(web_movies)
         web_record = self.database.get_actor_enrichment_record(actor_name)
         web_earliest, web_latest = self._collect_date_range(web_movies)
         cache_rows = self.database.get_javtxt_actor_cache_by_codes(
@@ -56,6 +57,7 @@ class ActorDetailLibrary:
             'local_videos': local_videos,
             'web_movies': web_movies,
             'eligible_web_movies': eligible_web_movies,
+            'raw_web_movie_count': len(raw_web_movies),
         }
 
     def _find_actor(self, actor_name):

@@ -8,9 +8,11 @@ from app.core.javtxt_entry_state import (
     classify_search_state,
 )
 from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, UNENRICHED_STATUS
+from app.services.video_category_service import VIDEO_CATEGORY_COLLECTION, normalize_video_category
 
 
 JAVTXT_AUTHOR_MIN_RELEASE_DATE = date(2020, 1, 1)
+VR_MARKER_RE = re.compile(r'v\s*r', re.IGNORECASE)
 
 JAVTXT_VIDEO_STATE_COMPLETED = 'completed'
 JAVTXT_VIDEO_STATE_FAILED = 'failed'
@@ -26,6 +28,12 @@ def is_javtxt_eligible_movie(movie):
     code = normalize_javtxt_code((movie or {}).get('code', ''))
     if not code:
         return False
+    if _is_collection_movie(movie):
+        return False
+    if _contains_vr_marker((movie or {}).get('title', '')):
+        return False
+    if _contains_vr_marker((movie or {}).get('javtxt_tags', '')):
+        return False
 
     release_date_text = str((movie or {}).get('release_date', '') or '').strip()
     if not release_date_text:
@@ -37,6 +45,17 @@ def is_javtxt_eligible_movie(movie):
         return False
 
     return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE
+
+
+def _is_collection_movie(movie):
+    return normalize_video_category((movie or {}).get('video_category', '')) == VIDEO_CATEGORY_COLLECTION
+
+
+def _contains_vr_marker(value):
+    normalized_text = str(value or '').replace('Ｖ', 'V').replace('Ｒ', 'R')
+    return bool(VR_MARKER_RE.search(normalized_text))
+
+
 def get_javtxt_cache_row(cache_rows, movie):
     code = normalize_javtxt_code((movie or {}).get('code', ''))
     if not code:

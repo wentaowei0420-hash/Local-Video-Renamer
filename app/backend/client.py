@@ -121,6 +121,9 @@ class BackendClient:
     def stage_video_category(self, code, category):
         return self._post('/database/videos/manual-category/stage', {'code': code, 'category': category})
 
+    def stage_video_categories(self, entries):
+        return self._post('/database/videos/manual-category/stage/batch', {'entries': entries})
+
     def sync_staged_video_categories(self):
         return self._post('/database/videos/manual-category/sync')
 

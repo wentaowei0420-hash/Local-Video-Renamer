@@ -18,8 +18,9 @@ class CodePrefixDetailLibrary:
             raise ValueError('缺少番号前缀')
 
         enrichment = self.database.get_code_prefix_enrichment_record(prefix)
-        movies = self.database.list_code_prefix_movies(prefix)
-        eligible_movies = self._filter_eligible_movies(movies)
+        raw_movies = self.database.list_code_prefix_movies(prefix)
+        movies = self._filter_eligible_movies(raw_movies)
+        eligible_movies = list(movies)
         earliest_release_date, latest_release_date = self._collect_date_range(movies)
         cache_rows = self.database.get_javtxt_actor_cache_by_codes(
             [str((movie or {}).get('code', '') or '').strip().upper() for movie in movies]
@@ -41,6 +42,7 @@ class CodePrefixDetailLibrary:
             'top_actors': self._build_top_actors(eligible_movies),
             'movies': movies,
             'eligible_movies': eligible_movies,
+            'raw_video_count': len(raw_movies),
         }
 
     def _filter_eligible_movies(self, movies):

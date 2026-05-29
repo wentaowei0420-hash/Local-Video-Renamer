@@ -2472,6 +2472,45 @@ class VideoDatabase:
                 'staged_count': self._count_staged_video_categories(cursor),
             }
 
+    def stage_video_categories(self, entries):
+        normalized_entries = {}
+        for entry in entries or []:
+            code = str((entry or {}).get('code', '') or '').strip().upper()
+            category = normalize_video_category((entry or {}).get('category', ''))
+            if not code:
+                continue
+            if category not in VIDEO_CATEGORY_OPTIONS:
+                raise ValueError('视频分类无效')
+            normalized_entries[code] = category
+
+        if not normalized_entries:
+            return {
+                'staged_count': 0,
+                'batch_count': 0,
+            }
+
+        payload = [
+            (code, category)
+            for code, category in normalized_entries.items()
+        ]
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                '''
+                INSERT INTO manual_category_staging (code, category, created_at, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(code) DO UPDATE SET
+                    category = excluded.category,
+                    updated_at = CURRENT_TIMESTAMP
+                ''',
+                payload,
+            )
+            conn.commit()
+            return {
+                'staged_count': self._count_staged_video_categories(cursor),
+                'batch_count': len(payload),
+            }
+
     def sync_staged_video_categories(self):
         with self._connect() as conn:
             cursor = conn.cursor()
