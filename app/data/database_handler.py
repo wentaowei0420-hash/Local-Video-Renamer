@@ -194,6 +194,16 @@ class VideoDatabase:
                     name TEXT PRIMARY KEY
                 )
             ''')
+            cursor.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS manual_category_staging (
+                    code TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                '''
+            )
             self._ensure_column(cursor, 'path_library', 'last_total_bytes', 'INTEGER DEFAULT 0')
             self._ensure_column(cursor, 'path_library', 'last_used_bytes', 'INTEGER DEFAULT 0')
             self._ensure_column(cursor, 'path_library', 'last_free_bytes', 'INTEGER DEFAULT 0')
@@ -247,6 +257,11 @@ class VideoDatabase:
             self._ensure_column(cursor, 'actor_movies', 'javtxt_tags', 'TEXT')
             self._ensure_column(cursor, 'actor_movies', 'author_raw', 'TEXT')
             self._ensure_column(cursor, 'actor_movies', 'video_category', 'TEXT')
+            self._ensure_index(cursor, 'idx_processed_videos_manual_category', 'processed_videos', 'javtxt_enrichment_status, video_category, code')
+            self._ensure_index(cursor, 'idx_code_prefix_movies_code', 'code_prefix_movies', 'code')
+            self._ensure_index(cursor, 'idx_code_prefix_movies_category_code', 'code_prefix_movies', 'video_category, code')
+            self._ensure_index(cursor, 'idx_actor_movies_code', 'actor_movies', 'code')
+            self._ensure_index(cursor, 'idx_actor_movies_category_code', 'actor_movies', 'video_category, code')
             cursor.execute(
                 '''
                 UPDATE code_prefix_enrichments
@@ -375,6 +390,12 @@ class VideoDatabase:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if column_name not in existing_columns:
             cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
+
+    @staticmethod
+    def _ensure_index(cursor, index_name, table_name, columns_sql):
+        cursor.execute(
+            f'CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns_sql})'
+        )
 
     def _video_source_columns(self, source_key):
         source_key_text = str(source_key or '').strip()
@@ -2348,10 +2369,8 @@ class VideoDatabase:
     def list_videos_requiring_manual_category(self):
         with self._connect() as conn:
             cursor = conn.cursor()
-            self._backfill_video_categories(cursor)
-            self._backfill_web_movie_categories(cursor, 'code_prefix_movies')
-            self._backfill_web_movie_categories(cursor, 'actor_movies')
-
+            staged_rows = self._list_staged_video_categories(cursor)
+            staged_codes = set(staged_rows)
             manual_rows = {}
 
             cursor.execute(
@@ -2368,7 +2387,7 @@ class VideoDatabase:
             )
             for row in cursor.fetchall():
                 code = str(row[0] or '').strip().upper()
-                if not code:
+                if not code or code in staged_codes:
                     continue
                 manual_rows[code] = {
                     'code': code,
@@ -2389,6 +2408,8 @@ class VideoDatabase:
                 '''
             )
             for row in cursor.fetchall():
+                if str(row[0] or '').strip().upper() in staged_codes:
+                    continue
                 self._merge_manual_category_row(
                     manual_rows,
                     code=row[0],
@@ -2411,6 +2432,8 @@ class VideoDatabase:
                 '''
             )
             for row in cursor.fetchall():
+                if str(row[0] or '').strip().upper() in staged_codes:
+                    continue
                 self._merge_manual_category_row(
                     manual_rows,
                     code=row[0],
@@ -2419,8 +2442,83 @@ class VideoDatabase:
                     author=row[3],
                     author_raw=row[4],
                 )
+        return {
+            'videos': [manual_rows[code] for code in sorted(manual_rows)],
+            'staged_count': len(staged_rows),
+        }
+
+    def stage_video_category(self, code, category):
+        normalized_code = str(code or '').strip().upper()
+        normalized_category = normalize_video_category(category)
+        if not normalized_code:
+            raise ValueError('缺少视频编号')
+        if normalized_category not in VIDEO_CATEGORY_OPTIONS:
+            raise ValueError('视频分类无效')
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                INSERT INTO manual_category_staging (code, category, created_at, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(code) DO UPDATE SET
+                    category = excluded.category,
+                    updated_at = CURRENT_TIMESTAMP
+                ''',
+                (normalized_code, normalized_category),
+            )
             conn.commit()
-        return [manual_rows[code] for code in sorted(manual_rows)]
+            return {
+                'staged_count': self._count_staged_video_categories(cursor),
+            }
+
+    def sync_staged_video_categories(self):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            staged_rows = list(self._list_staged_video_categories(cursor).items())
+            if not staged_rows:
+                return {
+                    'synced_count': 0,
+                    'updated_count': 0,
+                    'staged_count': 0,
+                }
+
+            update_payload = [(category, code) for code, category in staged_rows]
+            updated_count = 0
+            cursor.executemany(
+                '''
+                UPDATE processed_videos
+                SET video_category = ?
+                WHERE code = ?
+                ''',
+                update_payload,
+            )
+            updated_count += int(cursor.rowcount or 0)
+            cursor.executemany(
+                '''
+                UPDATE code_prefix_movies
+                SET video_category = ?
+                WHERE code = ?
+                ''',
+                update_payload,
+            )
+            updated_count += int(cursor.rowcount or 0)
+            cursor.executemany(
+                '''
+                UPDATE actor_movies
+                SET video_category = ?
+                WHERE code = ?
+                ''',
+                update_payload,
+            )
+            updated_count += int(cursor.rowcount or 0)
+            cursor.execute('DELETE FROM manual_category_staging')
+            conn.commit()
+            return {
+                'synced_count': len(staged_rows),
+                'updated_count': updated_count,
+                'staged_count': 0,
+            }
 
     def update_video_category(self, code, category):
         normalized_code = str(code or '').strip().upper()
@@ -2462,6 +2560,27 @@ class VideoDatabase:
             updated_count += int(cursor.rowcount or 0)
             conn.commit()
             return updated_count
+
+    @staticmethod
+    def _list_staged_video_categories(cursor):
+        cursor.execute(
+            '''
+            SELECT code, category
+            FROM manual_category_staging
+            ORDER BY updated_at, code
+            '''
+        )
+        return {
+            str(row[0] or '').strip().upper(): normalize_video_category(row[1])
+            for row in cursor.fetchall()
+            if str(row[0] or '').strip()
+        }
+
+    @staticmethod
+    def _count_staged_video_categories(cursor):
+        cursor.execute('SELECT COUNT(*) FROM manual_category_staging')
+        row = cursor.fetchone()
+        return int((row or [0])[0] or 0)
 
     @staticmethod
     def _merge_manual_category_row(rows_by_code, code, title, javtxt_url, author='', author_raw=''):

@@ -109,7 +109,15 @@ class BackendService:
 
     def list_videos_requiring_manual_category(self):
         self.ensure_database_loaded()
-        return {'videos': self.db.list_videos_requiring_manual_category()}
+        return self.db.list_videos_requiring_manual_category()
+
+    def stage_video_category(self, code, category):
+        self.ensure_database_loaded()
+        return self.db.stage_video_category(code, category)
+
+    def sync_staged_video_categories(self):
+        self.ensure_database_loaded()
+        return self.db.sync_staged_video_categories()
 
     def update_video_category(self, code, category):
         self.ensure_database_loaded()

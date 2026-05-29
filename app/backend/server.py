@@ -62,6 +62,10 @@ def make_handler(service):
                 return service.reset_video_enrichments(body.get('codes', []), body.get('source_key'))
             if method == 'GET' and path == '/database/videos/manual-category':
                 return service.list_videos_requiring_manual_category()
+            if method == 'POST' and path == '/database/videos/manual-category/stage':
+                return service.stage_video_category(body.get('code'), body.get('category'))
+            if method == 'POST' and path == '/database/videos/manual-category/sync':
+                return service.sync_staged_video_categories()
             if method == 'POST' and path == '/database/videos/category':
                 return service.update_video_category(body.get('code'), body.get('category'))
             if method == 'GET' and path == '/database/actors':

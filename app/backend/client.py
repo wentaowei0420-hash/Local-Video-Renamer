@@ -116,7 +116,13 @@ class BackendClient:
         return self._post('/database/videos/reset', {'codes': codes, 'source_key': source_key}).get('reset_count', 0)
 
     def list_videos_requiring_manual_category(self):
-        return self._get('/database/videos/manual-category').get('videos', [])
+        return self._get('/database/videos/manual-category')
+
+    def stage_video_category(self, code, category):
+        return self._post('/database/videos/manual-category/stage', {'code': code, 'category': category})
+
+    def sync_staged_video_categories(self):
+        return self._post('/database/videos/manual-category/sync')
 
     def update_video_category(self, code, category):
         return self._post('/database/videos/category', {'code': code, 'category': category}).get('updated_count', 0)
