@@ -1,5 +1,6 @@
 import re
 
+from app.core.video_code import standardize_video_code
 from app.core.video_filename_builder import build_video_filename
 
 
@@ -40,11 +41,9 @@ def clean_video_title(code, author, raw_name):
 
 
 def extract_code_from_filename(filename):
-    match = re.search(r'([a-zA-Z]+)[-_ ]?(\d+)', str(filename or ''))
+    match = re.search(r'(\d*[a-zA-Z]+)[-_ ]?(\d+)', str(filename or ''))
     if match:
-        letters = match.group(1).upper()
-        numbers = match.group(2)
-        return f'{letters}-{numbers}'
+        return standardize_video_code(f'{match.group(1)}{match.group(2)}')
     return None
 
 

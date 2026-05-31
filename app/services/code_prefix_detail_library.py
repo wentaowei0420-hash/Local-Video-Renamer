@@ -5,6 +5,7 @@ from app.core.javtxt_video_state import (
 )
 from app.core.enrichment_sources import build_library_enrichment_status_text
 from app.core.enrichment_status import UNENRICHED_STATUS
+from app.core.video_code import standardize_video_code
 from app.services.actor_identifier import split_actor_names
 
 
@@ -23,7 +24,7 @@ class CodePrefixDetailLibrary:
         eligible_movies = list(movies)
         earliest_release_date, latest_release_date = self._collect_date_range(movies)
         cache_rows = self.database.get_javtxt_actor_cache_by_codes(
-            [str((movie or {}).get('code', '') or '').strip().upper() for movie in movies]
+            [standardize_video_code((movie or {}).get('code', '')) for movie in movies]
         )
         movie_summary = summarize_javtxt_movies(movies, cache_rows=cache_rows)
 

@@ -14,6 +14,8 @@ VIDEO_CATEGORY_OPTIONS = (
 COLLECTION_TAG_KEYWORDS = (
     '精选合集',
     '四小时以上作品',
+    '16時間以上',
+    '福袋',
 )
 
 

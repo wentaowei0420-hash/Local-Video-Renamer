@@ -4,6 +4,7 @@ from time import monotonic
 from app.core.enrichment_sources import AVFAN_VIDEO_SOURCE, JAVTXT_VIDEO_SOURCE, get_video_enrichment_source_label
 from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
 from app.core.javtxt_video_state import summarize_javtxt_movies
+from app.core.video_code import standardize_video_code
 from app.services.code_prefix_library import CodePrefixLibrary
 
 
@@ -143,7 +144,7 @@ class DataCenterService:
             for movie in (movies or [])
         ]
         cache_rows = self.database.get_javtxt_actor_cache_by_codes(
-            [str((movie or {}).get('code', '') or '').strip().upper() for movie in eligible_movies]
+            [standardize_video_code((movie or {}).get('code', '')) for movie in eligible_movies]
         )
         summary = summarize_javtxt_movies(eligible_movies, cache_rows=cache_rows)
         return {

@@ -10,6 +10,7 @@ from app.core.runtime_config import (
     get_scraper_browser_channel,
     get_scraper_locale,
 )
+from app.core.video_code import compact_video_code
 from app.scraper.browser_window import minimize_browser_window_if_needed
 from app.scraper.exceptions import HumanVerificationRequiredError
 
@@ -720,7 +721,7 @@ def extract_movie_id(url):
 
 
 def normalize_code(value):
-    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
+    return compact_video_code(value)
 
 
 def wait_for_security_verification_if_needed(page, headless):

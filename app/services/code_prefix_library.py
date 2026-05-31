@@ -1,5 +1,6 @@
 import re
 
+from app.core.video_code import standardize_video_code
 from app.core.javtxt_video_state import (
     build_javtxt_library_status,
     is_javtxt_eligible_movie,
@@ -14,7 +15,7 @@ LEADING_ALPHA_PREFIX_RE = re.compile(r'^\s*([A-Za-z]+)\d', re.IGNORECASE)
 
 
 def extract_code_prefix(code):
-    text = str(code or '').strip().upper()
+    text = standardize_video_code(code)
     if not text:
         return ''
 

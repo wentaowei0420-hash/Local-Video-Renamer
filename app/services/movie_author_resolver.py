@@ -1,7 +1,7 @@
 import re
-from datetime import datetime
 
-from app.core.javtxt_video_state import JAVTXT_AUTHOR_MIN_RELEASE_DATE
+from app.core.video_code import compact_video_code
+from app.core.javtxt_video_state import is_javtxt_eligible_movie
 from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
 from app.core.javtxt_entry_state import (
     JAVTXT_SEARCH_STATE_FAILED,
@@ -316,27 +316,11 @@ class MovieAuthorResolver:
         self._log('INFO', 'JAVTXT 视频缓存写入完成', code=code, status=status, error=error)
 
     def _should_lookup_author(self, entry):
-        code = self._normalize_code((entry or {}).get('code', ''))
-        if not code:
-            return False
-        release_date = self._parse_release_date((entry or {}).get('release_date', ''))
-        if release_date is None:
-            return False
-        return release_date >= JAVTXT_AUTHOR_MIN_RELEASE_DATE
-
-    @staticmethod
-    def _parse_release_date(value):
-        text = str(value or '').strip()
-        if not text:
-            return None
-        try:
-            return datetime.strptime(text, '%Y-%m-%d').date()
-        except ValueError:
-            return None
+        return is_javtxt_eligible_movie(entry)
 
     @staticmethod
     def _normalize_code(value):
-        return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
+        return compact_video_code(value)
 
     @staticmethod
     def _normalize_video_status(value):

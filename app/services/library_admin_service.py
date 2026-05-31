@@ -1,5 +1,6 @@
 import re
 
+from app.core.video_code import standardize_video_code
 from app.services.actor_identifier import is_ignored_actor_name, normalize_actor_name, split_actor_names
 from app.services.code_prefix_library import CodePrefixLibrary, extract_code_prefix
 
@@ -47,7 +48,7 @@ class LibraryAdminService:
 
         code_updates = []
         for row in self.database.list_videos():
-            code = str(row.get('code', '')).strip().upper()
+            code = standardize_video_code(row.get('code', ''))
             if extract_code_prefix(code) != normalized_old_prefix:
                 continue
             code_updates.append((
@@ -60,7 +61,7 @@ class LibraryAdminService:
 
         web_movie_updates = []
         for movie in self.database.list_code_prefix_movies(normalized_old_prefix):
-            old_code = str(movie.get('code', '')).strip().upper()
+            old_code = standardize_video_code(movie.get('code', ''))
             if not old_code:
                 continue
             web_movie_updates.append((
@@ -119,7 +120,7 @@ class LibraryAdminService:
 
         author_updates = []
         for row in self.database.list_videos():
-            code = str(row.get('code', '')).strip().upper()
+            code = standardize_video_code(row.get('code', ''))
             author = str(row.get('author', '')).strip()
             updated_author = replace_actor_name_in_author_text(author, normalized_old_name, normalized_new_name)
             if code and updated_author != author:
@@ -161,14 +162,13 @@ def normalize_code_prefix(prefix):
 
 
 def replace_code_prefix_in_code(code, old_prefix, new_prefix):
-    normalized_code = str(code or '').strip().upper()
+    normalized_code = standardize_video_code(code)
     normalized_old_prefix = str(old_prefix or '').strip().upper()
     normalized_new_prefix = str(new_prefix or '').strip().upper()
     if extract_code_prefix(normalized_code) != normalized_old_prefix:
         return normalized_code
-    if not normalized_code.startswith(normalized_old_prefix):
-        return normalized_code
-    return f'{normalized_new_prefix}{normalized_code[len(normalized_old_prefix):]}'
+    suffix = normalized_code[len(normalized_old_prefix):].lstrip('-_ ')
+    return f'{normalized_new_prefix}-{suffix}' if suffix else normalized_new_prefix
 
 
 def replace_actor_name_in_author_text(author_text, old_name, new_name):

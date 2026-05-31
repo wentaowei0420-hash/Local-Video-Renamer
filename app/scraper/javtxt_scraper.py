@@ -2,6 +2,7 @@ import re
 from contextlib import contextmanager
 
 from app.core.enrichment_sources import JAVTXT_VIDEO_SOURCE
+from app.core.video_code import compact_video_code
 from app.core.runtime_config import (
     get_javtxt_base_url,
     get_javtxt_search_url,
@@ -21,6 +22,7 @@ SECTION_ICON_RE = re.compile(r'^[^\w\s]')
 TITLE_SUFFIX_RE = re.compile(r'\s*-\s*JAV.*$', re.I)
 
 TITLE_SECTION_LABELS = {'番号', '演员', '出演女优'}
+CODE_SECTION_LABELS = ('番号',)
 ACTOR_SECTION_LABELS = ('出演女优', '演员')
 PRIMARY_ACTOR_SECTION_LABELS = ('出演女优',)
 SECONDARY_ACTOR_SECTION_LABELS = ('演员',)
@@ -121,6 +123,22 @@ class JavtxtScraper:
             page.goto(detail_url, wait_until='domcontentloaded', timeout=60000)
             wait_for_page_ready(page)
             info = self.parse_movie_info(page, normalized_code)
+            page_code = normalize_code(info.get('page_code', ''))
+            if page_code and page_code != normalized_code:
+                self._log(
+                    'WARNING',
+                    'JAVTXT 详情页番号不匹配，忽略本次结果',
+                    code=normalized_code,
+                    page_code=page_code,
+                    detail_url=detail_url,
+                )
+                return {
+                    'code': normalized_code,
+                    'found': False,
+                    'error': f'JAVTXT 详情页番号不匹配：{page_code}',
+                    'source': JAVTXT_VIDEO_SOURCE,
+                }
+
             info['found'] = bool(info.get('javtxt_movie_id'))
             info['source'] = JAVTXT_VIDEO_SOURCE
             self._log(
@@ -158,6 +176,7 @@ class JavtxtScraper:
         lines = visible_lines(page)
         final_url = page.url or ''
         movie_id = extract_javtxt_movie_id(final_url)
+        page_code = extract_page_code(lines)
         title = extract_title(page, lines, requested_code)
         raw_actors_text, actors_text = extract_actors_text_details(lines)
         release_date = extract_detail_value(lines, RELEASE_DATE_LABELS)
@@ -170,12 +189,14 @@ class JavtxtScraper:
             code=requested_code,
             visible_line_count=len(lines),
             movie_id=movie_id,
+            page_code=page_code,
             title=title,
             actors_text=actors_text,
             raw_actors_text=raw_actors_text,
         )
         return {
             'code': requested_code,
+            'page_code': page_code,
             'title': title,
             'author': actors_text,
             'author_raw': raw_actors_text,
@@ -206,6 +227,14 @@ def visible_lines(page):
 def extract_javtxt_movie_id(url):
     match = JAVTXT_DETAIL_RE.search(url or '')
     return match.group(1) if match else ''
+
+
+def extract_page_code(lines):
+    raw_code = extract_detail_value(lines, CODE_SECTION_LABELS)
+    if not raw_code:
+        return ''
+    first_value = re.split(r'[\s(（]+', str(raw_code).strip(), maxsplit=1)[0]
+    return normalize_code(first_value)
 
 
 def extract_title(page, lines, requested_code):
@@ -377,4 +406,4 @@ def strip_leading_section_icons(text):
 
 
 def normalize_code(value):
-    return re.sub(r'[^A-Z0-9]', '', str(value or '').upper())
+    return compact_video_code(value)

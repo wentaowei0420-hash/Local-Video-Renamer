@@ -1,7 +1,8 @@
 import re
 
+from app.core.video_code import standardize_video_code
 
-CODE_RE = re.compile(r'[A-Z0-9]+-\d+', re.IGNORECASE)
+CODE_RE = re.compile(r'\b\d*[A-Z]+[A-Z0-9]*[-_ ]?\d+\b', re.IGNORECASE)
 DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 RATING_RE = re.compile(r'^\d+(?:\.\d+)?分$')
 BADGE_TEXTS = ('有字幕', '有磁链', '48小时磁链')
@@ -30,7 +31,7 @@ def parse_code_prefix_card(text, href='', prefix='', page_number=1):
 
 def extract_code(text):
     match = CODE_RE.search(str(text or '').upper())
-    return match.group(0).upper() if match else ''
+    return standardize_video_code(match.group(0)) if match else ''
 
 
 def extract_release_date(text):
