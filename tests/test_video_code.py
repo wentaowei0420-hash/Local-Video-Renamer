@@ -339,6 +339,53 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
 
         self.assertEqual(rows, [('', '', UNENRICHED_STATUS, '')])
 
+    def test_database_init_propagates_existing_web_movie_javtxt_state_by_code(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            VideoDatabase(db_path)
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO code_prefix_movies (
+                        prefix, code, title, author, release_date, avfan_url, page_number,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags,
+                        javtxt_release_date, author_raw, video_category
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        'AGMX', 'AGMX-151', 'prefix row', '婕斿憳鐢?', '2025-01-01',
+                        'https://avfan.example/prefix/agmx-151', 1, ENRICHED_STATUS,
+                        '151', 'https://javtxt.top/v/151', '浜哄', '2025-01-01',
+                        '婕斿憳鐢?', '',
+                    ),
+                )
+                conn.execute(
+                    '''
+                    INSERT INTO actor_movies (
+                        actor_name, code, title, author, release_date, avfan_url, page_number,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags,
+                        javtxt_release_date, author_raw, video_category
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        'Actor A', 'AGMX-151', 'actor row', '', '2025-01-01',
+                        'https://avfan.example/actor/agmx-151', 1, UNENRICHED_STATUS,
+                        '', '', '', '', '', '',
+                    ),
+                )
+                conn.commit()
+
+            VideoDatabase(db_path)
+            movie = VideoDatabase(db_path).list_actor_movies('Actor A')[0]
+
+        self.assertEqual(movie['avfan_url'], 'https://avfan.example/actor/agmx-151')
+        self.assertEqual(movie['javtxt_movie_id'], '151')
+        self.assertEqual(movie['javtxt_url'], 'https://javtxt.top/v/151')
+        self.assertEqual(movie['author'], '婕斿憳鐢?')
+        self.assertEqual(movie['javtxt_enrichment_status'], ENRICHED_STATUS)
+
     def test_javtxt_video_library_candidates_skip_ineligible_old_videos(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -523,6 +570,297 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
 
         self.assertEqual(movie['javtxt_enrichment_status'], '无搜索结果')
 
+    def test_replace_code_prefix_movies_clears_actor_state_without_javtxt_detail_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+
+            db.replace_code_prefix_movies(
+                'AGMX',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'AGMX-151',
+                        'author': '婕斿憳鐢?婕斿憳涔?',
+                        'author_raw': '婕斿憳鐢?婕斿憳涔?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://example.com/movies/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '',
+                        'javtxt_url': '',
+                        'javtxt_tags': '',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            movie = db.list_code_prefix_movies('AGMX')[0]
+
+        self.assertEqual(movie['author'], '')
+        self.assertEqual(movie['author_raw'], '')
+        self.assertEqual(movie['javtxt_enrichment_status'], UNENRICHED_STATUS)
+
+    def test_replace_actor_movies_clears_actor_state_without_javtxt_detail_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'AGMX-151',
+                        'author': '婕斿憳鐢?婕斿憳涔?',
+                        'author_raw': '婕斿憳鐢?婕斿憳涔?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://example.com/movies/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '',
+                        'javtxt_url': '',
+                        'javtxt_tags': '',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            movie = db.list_actor_movies('Actor A')[0]
+
+        self.assertEqual(movie['author'], '')
+        self.assertEqual(movie['author_raw'], '')
+        self.assertEqual(movie['javtxt_enrichment_status'], UNENRICHED_STATUS)
+
+    def test_save_javtxt_cache_for_video_rejects_enriched_actor_state_without_detail_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.import_local_videos(
+                [
+                    {'code': 'AGMX-151', 'storage_location': 'D:\\videos', 'size': '1GB'},
+                ]
+            )
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    "UPDATE processed_videos SET release_date = ?, javtxt_release_date = ? WHERE code = ?",
+                    ('2025-01-01', '2025-01-01', 'AGMX-151'),
+                )
+                conn.commit()
+
+            db.save_javtxt_cache_for_video(
+                'AGMX-151',
+                {
+                    'javtxt_title': 'AGMX-151 title',
+                    'javtxt_actors': '婕斿憳鐢?婕斿憳涔?',
+                    'javtxt_actors_raw': '婕斿憳鐢?婕斿憳涔?',
+                    'release_date': '2025-01-01',
+                },
+                status=ENRICHED_STATUS,
+            )
+
+            with closing(sqlite3.connect(db_path)) as conn:
+                row = conn.execute(
+                    '''
+                    SELECT javtxt_actors, javtxt_actors_raw, javtxt_enrichment_status, javtxt_movie_id, javtxt_url
+                    FROM processed_videos
+                    WHERE code = ?
+                    ''',
+                    ('AGMX-151',),
+                ).fetchone()
+
+        self.assertEqual(row[:3], ('', '', UNENRICHED_STATUS))
+        self.assertFalse(row[3])
+        self.assertFalse(row[4])
+
+    def test_replace_code_prefix_movies_preserves_existing_javtxt_state_during_avfan_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.replace_code_prefix_movies(
+                'AGMX',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'old title',
+                        'author': '婕斿憳鐢?',
+                        'author_raw': '婕斿憳鐢?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/old/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '151',
+                        'javtxt_url': 'https://javtxt.top/v/151',
+                        'javtxt_tags': '浜哄',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            db.replace_code_prefix_movies(
+                'AGMX',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'fresh avfan title',
+                        'author': '',
+                        'author_raw': '',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/new/agmx-151',
+                        'javtxt_enrichment_status': '',
+                        'javtxt_movie_id': '',
+                        'javtxt_url': '',
+                        'javtxt_tags': '',
+                        'javtxt_release_date': '',
+                    }
+                ],
+            )
+
+            movie = db.list_code_prefix_movies('AGMX')[0]
+
+        self.assertEqual(movie['avfan_url'], 'https://avfan.example/new/agmx-151')
+        self.assertEqual(movie['javtxt_movie_id'], '151')
+        self.assertEqual(movie['javtxt_url'], 'https://javtxt.top/v/151')
+        self.assertEqual(movie['author'], '婕斿憳鐢?')
+        self.assertEqual(movie['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_replace_actor_movies_preserves_existing_javtxt_state_during_avfan_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'old title',
+                        'author': '婕斿憳鐢?',
+                        'author_raw': '婕斿憳鐢?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/old/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '151',
+                        'javtxt_url': 'https://javtxt.top/v/151',
+                        'javtxt_tags': '浜哄',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'fresh avfan title',
+                        'author': '',
+                        'author_raw': '',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/new/agmx-151',
+                        'javtxt_enrichment_status': '',
+                        'javtxt_movie_id': '',
+                        'javtxt_url': '',
+                        'javtxt_tags': '',
+                        'javtxt_release_date': '',
+                    }
+                ],
+            )
+
+            movie = db.list_actor_movies('Actor A')[0]
+
+        self.assertEqual(movie['avfan_url'], 'https://avfan.example/new/agmx-151')
+        self.assertEqual(movie['javtxt_movie_id'], '151')
+        self.assertEqual(movie['javtxt_url'], 'https://javtxt.top/v/151')
+        self.assertEqual(movie['author'], '婕斿憳鐢?')
+        self.assertEqual(movie['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_replace_code_prefix_movies_propagates_javtxt_state_to_actor_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'actor row',
+                        'author': '',
+                        'author_raw': '',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/actor/agmx-151',
+                    }
+                ],
+            )
+
+            db.replace_code_prefix_movies(
+                'AGMX',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'prefix row',
+                        'author': '婕斿憳鐢?',
+                        'author_raw': '婕斿憳鐢?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/prefix/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '151',
+                        'javtxt_url': 'https://javtxt.top/v/151',
+                        'javtxt_tags': '浜哄',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            actor_movie = db.list_actor_movies('Actor A')[0]
+
+        self.assertEqual(actor_movie['avfan_url'], 'https://avfan.example/actor/agmx-151')
+        self.assertEqual(actor_movie['javtxt_movie_id'], '151')
+        self.assertEqual(actor_movie['javtxt_url'], 'https://javtxt.top/v/151')
+        self.assertEqual(actor_movie['author'], '婕斿憳鐢?')
+        self.assertEqual(actor_movie['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_replace_actor_movies_propagates_javtxt_state_to_code_prefix_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.replace_code_prefix_movies(
+                'AGMX',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'prefix row',
+                        'author': '',
+                        'author_raw': '',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/prefix/agmx-151',
+                    }
+                ],
+            )
+
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'AGMX-151',
+                        'title': 'actor row',
+                        'author': '婕斿憳鐢?',
+                        'author_raw': '婕斿憳鐢?',
+                        'release_date': '2025-01-01',
+                        'avfan_url': 'https://avfan.example/actor/agmx-151',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '151',
+                        'javtxt_url': 'https://javtxt.top/v/151',
+                        'javtxt_tags': '浜哄',
+                        'javtxt_release_date': '2025-01-01',
+                    }
+                ],
+            )
+
+            prefix_movie = db.list_code_prefix_movies('AGMX')[0]
+
+        self.assertEqual(prefix_movie['avfan_url'], 'https://avfan.example/prefix/agmx-151')
+        self.assertEqual(prefix_movie['javtxt_movie_id'], '151')
+        self.assertEqual(prefix_movie['javtxt_url'], 'https://javtxt.top/v/151')
+        self.assertEqual(prefix_movie['author'], '婕斿憳鐢?')
+        self.assertEqual(prefix_movie['javtxt_enrichment_status'], ENRICHED_STATUS)
+
     def test_list_code_prefix_movies_returns_javtxt_release_date(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -617,6 +955,31 @@ class _StubScraper:
         }
 
 
+class _EligibleStubScraper:
+    def __init__(self):
+        self.fetch_count = 0
+
+    @contextmanager
+    def session(self):
+        yield None
+
+    def fetch_by_code(self, code):
+        self.fetch_count += 1
+        return {
+            'code': code,
+            'found': True,
+            'title': 'new movie',
+            'javtxt_title': 'new movie',
+            'author': '婕斿憳A',
+            'javtxt_actors': '婕斿憳A',
+            'javtxt_actors_raw': '婕斿憳A',
+            'release_date': '2025-05-13',
+            'javtxt_tags': '浜哄',
+            'javtxt_movie_id': '502298',
+            'javtxt_url': 'https://javtxt.top/v/502298',
+        }
+
+
 class _FailOnFetchScraper:
     @contextmanager
     def session(self):
@@ -680,6 +1043,31 @@ class MovieAuthorResolverEligibilityTest(unittest.TestCase):
         self.assertEqual(result['processed_video_count'], 0)
         self.assertEqual(result['pending_video_count'], 0)
         self.assertEqual(entry['code'], 'ACZD072')
+
+    def test_same_batch_cached_result_applies_javtxt_detail_fields_to_duplicate_code(self):
+        scraper = _EligibleStubScraper()
+        resolver = MovieAuthorResolver(_StubDatabase(), scraper=scraper)
+        result = resolver.enrich_entries_with_details(
+            [
+                {
+                    'code': 'ABP-123',
+                    'title': 'ABP-123',
+                    'author': '',
+                    'release_date': '2025-05-13',
+                },
+                {
+                    'code': 'ABP-123',
+                    'title': 'ABP-123 duplicate',
+                    'author': '',
+                    'release_date': '2025-05-13',
+                },
+            ]
+        )
+
+        self.assertEqual(scraper.fetch_count, 1)
+        self.assertEqual(result['entries'][0]['javtxt_url'], 'https://javtxt.top/v/502298')
+        self.assertEqual(result['entries'][1]['javtxt_url'], 'https://javtxt.top/v/502298')
+        self.assertEqual(result['entries'][1]['javtxt_movie_id'], '502298')
 
 
 if __name__ == '__main__':

@@ -23,6 +23,7 @@ class MovieAuthorResolver:
         self.should_stop = should_stop or (lambda: False)
         self._author_cache = {}
         self._status_cache = {}
+        self._result_cache = {}
 
     def session(self):
         return self.scraper.session()
@@ -202,12 +203,12 @@ class MovieAuthorResolver:
         cached_author = normalize_second_source_actor_text((cached_row or {}).get('javtxt_actors', ''))
         cached_has_trusted_release_date = self._has_trusted_release_date(cached_row)
         if cached_author:
-            entry['author'] = cached_author
             if is_resolved_search_state(cached_search_state) and cached_has_trusted_release_date:
-                entry['author_raw'] = str((cached_row or {}).get('javtxt_actors_raw', '') or '').strip()
+                self._apply_cached_javtxt_state(entry, cached_row)
                 return False, 'cached_author_applied'
+            entry['author'] = cached_author
         if is_resolved_search_state(cached_search_state):
-            entry['author_raw'] = str((cached_row or {}).get('javtxt_actors_raw', '') or '').strip()
+            self._apply_cached_javtxt_state(entry, cached_row)
             if cached_has_trusted_release_date:
                 return False, f'cached_terminal_state:{cached_search_state}'
             return True, f'cached_{cached_search_state}_needs_release_date_validation'
@@ -218,6 +219,22 @@ class MovieAuthorResolver:
     @staticmethod
     def _has_author(entry):
         return bool(normalize_second_source_actor_text((entry or {}).get('author', '')))
+
+    @staticmethod
+    def _apply_cached_javtxt_state(entry, cached_row):
+        current = dict(cached_row or {})
+        author = normalize_second_source_actor_text(current.get('javtxt_actors', current.get('author', '')))
+        if author:
+            entry['author'] = author
+        entry['author_raw'] = str(current.get('javtxt_actors_raw', current.get('author_raw', '')) or '').strip()
+        entry['javtxt_enrichment_status'] = str(current.get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
+        entry['javtxt_movie_id'] = str(current.get('javtxt_movie_id', '') or '').strip()
+        entry['javtxt_url'] = str(current.get('javtxt_url', '') or '').strip()
+        entry['javtxt_tags'] = str(current.get('javtxt_tags', '') or '').strip()
+        release_date = str(current.get('javtxt_release_date', current.get('release_date', '')) or '').strip()
+        if release_date:
+            entry['release_date'] = release_date
+            entry['javtxt_release_date'] = release_date
 
     @staticmethod
     def _has_trusted_javtxt_release_date(entry):
@@ -235,6 +252,8 @@ class MovieAuthorResolver:
         )
 
     def _resolve_author_result(self, code, cached_row):
+        if code in self._result_cache:
+            return dict(self._result_cache.get(code, {}) or {})
         if code in self._author_cache or code in self._status_cache:
             self._log(
                 'INFO',
@@ -260,7 +279,7 @@ class MovieAuthorResolver:
             resolved_status = self._status_from_search_state(cached_search_state, ENRICHED_STATUS)
             self._status_cache[code] = resolved_status
             self._log('INFO', '命中数据库作者缓存', code=code, status=ENRICHED_STATUS, author=cached_author)
-            return {
+            result = {
                 'author': cached_author,
                 'status': resolved_status,
                 'author_raw': str((cached_row or {}).get('javtxt_actors_raw', cached_author) or '').strip(),
@@ -268,12 +287,14 @@ class MovieAuthorResolver:
                 'javtxt_url': str((cached_row or {}).get('javtxt_url', '') or '').strip(),
                 'javtxt_tags': str((cached_row or {}).get('javtxt_tags', '') or '').strip(),
             }
+            self._result_cache[code] = dict(result)
+            return result
         if is_resolved_search_state(cached_search_state):
             resolved_status = self._status_from_search_state(cached_search_state, cached_status)
             self._author_cache[code] = ''
             self._status_cache[code] = resolved_status
             self._log('INFO', '命中数据库终态缓存，不再请求详情页', code=code, status=cached_status)
-            return {
+            result = {
                 'author': '',
                 'status': resolved_status,
                 'author_raw': str((cached_row or {}).get('javtxt_actors_raw', '') or '').strip(),
@@ -281,6 +302,8 @@ class MovieAuthorResolver:
                 'javtxt_url': str((cached_row or {}).get('javtxt_url', '') or '').strip(),
                 'javtxt_tags': str((cached_row or {}).get('javtxt_tags', '') or '').strip(),
             }
+            self._result_cache[code] = dict(result)
+            return result
 
         author = ''
         status = UNENRICHED_STATUS
@@ -332,7 +355,7 @@ class MovieAuthorResolver:
             author=author,
             error=error_message,
         )
-        return {
+        result = {
             'author': author,
             'author_raw': str((info or {}).get('author_raw', (info or {}).get('javtxt_actors_raw', author)) or '').strip(),
             'status': status,
@@ -341,6 +364,8 @@ class MovieAuthorResolver:
             'javtxt_tags': str((info or {}).get('javtxt_tags', '') or '').strip(),
             'release_date': str((info or {}).get('release_date', '') or '').strip(),
         }
+        self._result_cache[code] = dict(result)
+        return result
 
     def _save_video_cache(self, code, info, status=ENRICHED_STATUS, error=''):
         if self.database is None or not hasattr(self.database, 'save_javtxt_cache_for_video'):

@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 
 from app.core.enrichment_sources import AVFAN_VIDEO_SOURCE, JAVTXT_VIDEO_SOURCE
 from app.core.enrichment_status import ENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
@@ -252,6 +254,82 @@ class LibraryStatusSyncServiceTest(unittest.TestCase):
         self.assertEqual(actor_movie["javtxt_url"], "")
         self.assertEqual(prefix_record["javtxt_enrichment_status"], UNENRICHED_STATUS)
         self.assertEqual(actor_record["javtxt_enrichment_status"], UNENRICHED_STATUS)
+
+    def test_sync_does_not_propagate_actor_state_without_detail_reference(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "video_database.db"
+            db = VideoDatabase(db_path)
+            db.import_local_videos(
+                [
+                    {
+                        "code": "AGMX-151",
+                        "storage_location": "D:\\videos",
+                        "size": "1GB",
+                    }
+                ]
+            )
+            db.save_code_prefix_enrichment("AGMX", ENRICHED_STATUS, total_pages=1, total_videos=1, source_key=AVFAN_VIDEO_SOURCE)
+            db.save_actor_enrichment("婕斿憳D", ENRICHED_STATUS, total_pages=1, total_videos=1, actor_id="actor-d", source_key=AVFAN_VIDEO_SOURCE)
+            db.save_code_prefix_enrichment("AGMX", UNENRICHED_STATUS, total_videos=1, source_key=JAVTXT_VIDEO_SOURCE)
+            db.save_actor_enrichment("婕斿憳D", UNENRICHED_STATUS, total_videos=1, source_key=JAVTXT_VIDEO_SOURCE)
+            db.replace_code_prefix_movies(
+                "AGMX",
+                [
+                    {
+                        "code": "AGMX-151",
+                        "title": "AGMX-151",
+                        "author": "",
+                        "author_raw": "",
+                        "release_date": "2025-01-01",
+                        "avfan_url": "https://example.com/prefix/agmx-151",
+                        "javtxt_enrichment_status": UNENRICHED_STATUS,
+                        "javtxt_movie_id": "",
+                        "javtxt_url": "",
+                        "javtxt_tags": "",
+                        "javtxt_release_date": "2025-01-01",
+                    }
+                ],
+            )
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO actor_movies (
+                        actor_name, code, title, author, release_date, avfan_url, page_number,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags, javtxt_release_date, author_raw, video_category
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        "婕斿憳D",
+                        "AGMX-151",
+                        "polluted title",
+                        "婕斿憳鐢?婕斿憳涔?",
+                        "2025-01-01",
+                        "https://example.com/actor/agmx-151",
+                        1,
+                        ENRICHED_STATUS,
+                        "",
+                        "",
+                        "",
+                        "2025-01-01",
+                        "婕斿憳鐢?婕斿憳涔?",
+                        "",
+                    ),
+                )
+                conn.commit()
+
+            LibraryStatusSyncService(db).sync()
+
+            prefix_movie = db.list_code_prefix_movies("AGMX")[0]
+            actor_movie = db.list_actor_movies("婕斿憳D")[0]
+            del db
+
+        self.assertEqual(prefix_movie["author"], "")
+        self.assertEqual(prefix_movie["author_raw"], "")
+        self.assertEqual(prefix_movie["javtxt_enrichment_status"], UNENRICHED_STATUS)
+        self.assertEqual(actor_movie["author"], "")
+        self.assertEqual(actor_movie["author_raw"], "")
+        self.assertEqual(actor_movie["javtxt_enrichment_status"], UNENRICHED_STATUS)
 
 
 if __name__ == "__main__":
