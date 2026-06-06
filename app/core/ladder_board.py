@@ -1,3 +1,6 @@
+import re
+
+
 LADDER_BOARD_ACTOR = 'juese'
 LADDER_BOARD_CODE_PREFIX = 'tianyin'
 
@@ -40,6 +43,8 @@ _TIER_ORDER = {
     LADDER_TIER_C: 3,
 }
 
+_LADDER_MEDAL_SPLIT_PATTERN = re.compile(r'[\r\n,，、;；|]+')
+
 
 def normalize_ladder_board_key(board_key):
     normalized_key = str(board_key or '').strip().lower()
@@ -65,3 +70,19 @@ def normalize_ladder_tier(tier):
 
 def ladder_tier_sort_key(tier):
     return _TIER_ORDER.get(normalize_ladder_tier(tier), len(_TIER_ORDER))
+
+
+def split_ladder_medals(medal_text):
+    medals = []
+    seen = set()
+    for raw_medal in _LADDER_MEDAL_SPLIT_PATTERN.split(str(medal_text or '')):
+        medal = str(raw_medal or '').strip()
+        if not medal or medal in seen:
+            continue
+        medals.append(medal)
+        seen.add(medal)
+    return medals
+
+
+def normalize_ladder_medal_text(medal_text):
+    return '\n'.join(split_ladder_medals(medal_text))

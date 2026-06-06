@@ -4,12 +4,29 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.core.ladder_board import LADDER_BOARD_ACTOR, LADDER_BOARD_CODE_PREFIX
+from app.core.ladder_board import (
+    LADDER_BOARD_ACTOR,
+    LADDER_BOARD_CODE_PREFIX,
+    normalize_ladder_medal_text,
+    split_ladder_medals,
+)
 from app.data.database_handler import VideoDatabase
 from app.services.ladder_board_service import LadderBoardService
 
 
 class LadderBoardServiceTest(unittest.TestCase):
+    def test_medal_text_normalizes_multiple_delimiters(self):
+        medal_text = '年度新人，白金常青树\n封面女王；年度新人|传奇系列'
+
+        self.assertEqual(
+            split_ladder_medals(medal_text),
+            ['年度新人', '白金常青树', '封面女王', '传奇系列'],
+        )
+        self.assertEqual(
+            normalize_ladder_medal_text(medal_text),
+            '年度新人\n白金常青树\n封面女王\n传奇系列',
+        )
+
     def test_actor_candidates_fill_top_20_after_selected_entries_are_excluded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -55,13 +72,14 @@ class LadderBoardServiceTest(unittest.TestCase):
             )
             service = LadderBoardService(db)
             service.admit_entry(LADDER_BOARD_CODE_PREFIX, 'IPX', 'S')
-            service.update_medal(LADDER_BOARD_CODE_PREFIX, 'IPX', '白金常青树')
+            service.update_medal(LADDER_BOARD_CODE_PREFIX, 'IPX', '白金常青树，年度新人')
             board = service.get_board(LADDER_BOARD_CODE_PREFIX)
 
         self.assertEqual(len(board['selected']), 1)
         self.assertEqual(board['selected'][0]['entity_name'], 'IPX')
         self.assertEqual(board['selected'][0]['tier'], 'S')
-        self.assertEqual(board['selected'][0]['medal'], '白金常青树')
+        self.assertEqual(board['selected'][0]['medal'], '白金常青树\n年度新人')
+        self.assertEqual(board['selected'][0]['medals'], ['白金常青树', '年度新人'])
         self.assertEqual(board['candidates'][0]['entity_name'], 'MIDV')
 
 

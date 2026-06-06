@@ -255,6 +255,69 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
 
         self.assertEqual(rows, [(UNENRICHED_STATUS, '', '', '')])
 
+    def test_database_init_preserves_web_movie_no_result_without_javtxt_release_date(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            VideoDatabase(db_path)
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO code_prefix_movies (
+                        prefix, code, title, author, release_date,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags, javtxt_release_date
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        'ACZD',
+                        'ACZD-036',
+                        'ACZD-036',
+                        '',
+                        '2022-05-13',
+                        NO_SEARCH_RESULTS_STATUS,
+                        '',
+                        '',
+                        '',
+                        '',
+                    ),
+                )
+                conn.execute(
+                    '''
+                    INSERT INTO actor_movies (
+                        actor_name, code, title, author, release_date,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags, javtxt_release_date
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        'Actor A',
+                        'ACZD-036',
+                        'ACZD-036',
+                        '',
+                        '2022-05-13',
+                        NO_SEARCH_RESULTS_STATUS,
+                        '',
+                        '',
+                        '',
+                        '',
+                    ),
+                )
+                conn.commit()
+
+            db = VideoDatabase(db_path)
+            db.sanitize_ineligible_javtxt_state()
+            with closing(sqlite3.connect(db_path)) as conn:
+                rows = conn.execute(
+                    '''
+                    SELECT
+                        (SELECT javtxt_enrichment_status FROM code_prefix_movies WHERE prefix = ? AND code = ?),
+                        (SELECT javtxt_enrichment_status FROM actor_movies WHERE actor_name = ? AND code = ?)
+                    ''',
+                    ('ACZD', 'ACZD-036', 'Actor A', 'ACZD-036'),
+                ).fetchone()
+
+        self.assertEqual(rows, (NO_SEARCH_RESULTS_STATUS, NO_SEARCH_RESULTS_STATUS))
+
     def test_database_init_clears_web_movie_actor_state_without_javtxt_detail_reference(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -620,6 +683,107 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
         self.assertEqual(prefix_movie['javtxt_enrichment_status'], NO_SEARCH_RESULTS_STATUS)
         self.assertEqual(actor_movie['javtxt_enrichment_status'], NO_SEARCH_RESULTS_STATUS)
 
+    def test_save_javtxt_cache_for_video_refreshes_library_parent_statuses(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.import_local_videos(
+                [
+                    {'code': 'ACZD-072', 'storage_location': 'D:\\videos', 'size': '1GB'},
+                ]
+            )
+            db.replace_code_prefix_movies(
+                'ACZD',
+                [
+                    {
+                        'code': 'ACZD-072',
+                        'title': 'ACZD-072',
+                        'author': '',
+                        'release_date': '2022-12-09',
+                        'avfan_url': 'https://example.com/movies/aczd-072',
+                    }
+                ],
+            )
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'ACZD-072',
+                        'title': 'ACZD-072',
+                        'author': '',
+                        'release_date': '2022-12-09',
+                        'avfan_url': 'https://example.com/movies/aczd-072',
+                    }
+                ],
+            )
+
+            db.save_javtxt_cache_for_video(
+                'ACZD-072',
+                {
+                    'title': 'ACZD-072',
+                    'release_date': '2022-12-09',
+                },
+                status=NO_SEARCH_RESULTS_STATUS,
+                error='未搜索到匹配影片',
+            )
+
+            prefix_record = db.get_code_prefix_enrichment_record('ACZD')
+            actor_record = db.get_actor_enrichment_record('Actor A')
+
+        self.assertEqual(prefix_record['javtxt_enrichment_status'], ENRICHED_STATUS)
+        self.assertEqual(actor_record['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_replace_code_prefix_movies_refreshes_javtxt_parent_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.save_code_prefix_enrichment('ACZD', ENRICHED_STATUS, source_key=JAVTXT_VIDEO_SOURCE)
+
+            db.replace_code_prefix_movies(
+                'ACZD',
+                [
+                    {
+                        'code': 'ACZD-073',
+                        'title': 'ACZD-073',
+                        'author': '',
+                        'release_date': '2022-12-09',
+                        'avfan_url': 'https://example.com/movies/aczd-073',
+                    }
+                ],
+            )
+
+            record = db.get_code_prefix_enrichment_record('ACZD')
+
+        self.assertEqual(record['javtxt_enrichment_status'], UNENRICHED_STATUS)
+
+    def test_replace_actor_movies_refreshes_javtxt_parent_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.save_actor_enrichment('Actor A', UNENRICHED_STATUS, source_key=JAVTXT_VIDEO_SOURCE)
+
+            db.replace_actor_movies(
+                'Actor A',
+                [
+                    {
+                        'code': 'ACZD-073',
+                        'title': 'ACZD-073',
+                        'author': 'Actor A',
+                        'author_raw': 'Actor A',
+                        'release_date': '2022-12-09',
+                        'avfan_url': 'https://example.com/movies/aczd-073',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_movie_id': '123456',
+                        'javtxt_url': 'https://javtxt.top/v/123456',
+                        'javtxt_release_date': '2022-12-09',
+                    }
+                ],
+            )
+
+            record = db.get_actor_enrichment_record('Actor A')
+
+        self.assertEqual(record['javtxt_enrichment_status'], ENRICHED_STATUS)
+
     def test_sanitize_ineligible_javtxt_state_restores_processed_video_no_result_state_to_web_movie_tables(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -705,6 +869,45 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
                 ).fetchone()
 
         self.assertEqual(rows, (NO_SEARCH_RESULTS_STATUS, NO_SEARCH_RESULTS_STATUS))
+
+    def test_sanitize_ineligible_javtxt_state_refreshes_stale_library_parent_status(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.save_code_prefix_enrichment('AARM', ENRICHED_STATUS, source_key=JAVTXT_VIDEO_SOURCE)
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO code_prefix_movies (
+                        prefix, code, title, author, release_date, avfan_url, page_number,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags,
+                        javtxt_release_date, author_raw, video_category
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    (
+                        'AARM',
+                        'AARM-001',
+                        'AARM-001',
+                        '',
+                        '2022-12-09',
+                        'https://example.com/movies/aarm-001',
+                        1,
+                        UNENRICHED_STATUS,
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                    ),
+                )
+                conn.commit()
+
+            db.sanitize_ineligible_javtxt_state()
+            record = db.get_code_prefix_enrichment_record('AARM')
+
+        self.assertEqual(record['javtxt_enrichment_status'], UNENRICHED_STATUS)
 
     def test_replace_code_prefix_movies_clears_actor_state_without_javtxt_detail_reference(self):
         with tempfile.TemporaryDirectory() as temp_dir:

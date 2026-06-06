@@ -688,6 +688,7 @@ class VideoDatabase:
             SELECT rowid
             FROM {table_name}
             WHERE COALESCE(javtxt_release_date, '') = ''
+              AND COALESCE(javtxt_enrichment_status, '') <> ?
               AND (
                     COALESCE(javtxt_enrichment_status, '') <> ?
                  OR COALESCE(javtxt_movie_id, '') <> ''
@@ -695,7 +696,7 @@ class VideoDatabase:
                  OR COALESCE(javtxt_tags, '') <> ''
               )
             ''',
-            (UNENRICHED_STATUS,),
+            (NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS),
         )
         rowids_to_clear = [row[0] for row in cursor.fetchall() if row and row[0] is not None]
         for index in range(0, len(rowids_to_clear), 500):
@@ -817,9 +818,21 @@ class VideoDatabase:
     def sanitize_ineligible_javtxt_state(self):
         with self._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT DISTINCT prefix FROM code_prefix_movies')
+            cursor.execute(
+                '''
+                SELECT prefix FROM code_prefix_movies
+                UNION
+                SELECT prefix FROM code_prefix_enrichments
+                '''
+            )
             prefixes = [str((row or [''])[0] or '').strip().upper() for row in cursor.fetchall()]
-            cursor.execute('SELECT DISTINCT actor_name FROM actor_movies')
+            cursor.execute(
+                '''
+                SELECT actor_name FROM actor_movies
+                UNION
+                SELECT actor_name FROM actor_enrichments
+                '''
+            )
             actor_names = [str((row or [''])[0] or '').strip() for row in cursor.fetchall()]
             cursor.execute(
                 '''
@@ -1411,6 +1424,65 @@ class VideoDatabase:
             )
             updated_count += int(cursor.rowcount or 0)
         return updated_count
+
+    def _list_web_movie_parent_keys_for_codes(self, cursor, codes):
+        normalized_codes = []
+        seen = set()
+        for code in codes or []:
+            normalized_code = standardize_video_code(code)
+            if not normalized_code or normalized_code in seen:
+                continue
+            seen.add(normalized_code)
+            normalized_codes.append(normalized_code)
+        if not normalized_codes:
+            return set(), set()
+
+        placeholders = ','.join('?' for _ in normalized_codes)
+        cursor.execute(
+            f'''
+            SELECT DISTINCT prefix
+            FROM code_prefix_movies
+            WHERE code IN ({placeholders})
+            ''',
+            normalized_codes,
+        )
+        prefixes = {
+            str((row or [''])[0] or '').strip().upper()
+            for row in cursor.fetchall()
+            if str((row or [''])[0] or '').strip()
+        }
+        cursor.execute(
+            f'''
+            SELECT DISTINCT actor_name
+            FROM actor_movies
+            WHERE code IN ({placeholders})
+            ''',
+            normalized_codes,
+        )
+        actor_names = {
+            str((row or [''])[0] or '').strip()
+            for row in cursor.fetchall()
+            if str((row or [''])[0] or '').strip()
+        }
+        return prefixes, actor_names
+
+    def _refresh_web_movie_parent_javtxt_statuses_for_codes(self, codes):
+        normalized_codes = [
+            standardize_video_code(code)
+            for code in (codes or [])
+            if standardize_video_code(code)
+        ]
+        if not normalized_codes:
+            return
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            prefixes, actor_names = self._list_web_movie_parent_keys_for_codes(cursor, normalized_codes)
+
+        if prefixes:
+            self.refresh_code_prefix_javtxt_statuses(sorted(prefixes))
+        if actor_names:
+            self.refresh_actor_javtxt_statuses(sorted(actor_names))
 
     def save_plans(self, plans):
         """将扫描到的计划列表批量写入/更新到数据库"""
@@ -2091,6 +2163,7 @@ class VideoDatabase:
                     [movie['code'] for movie in normalized_movies],
                 )
             conn.commit()
+        self.refresh_code_prefix_javtxt_statuses([prefix])
 
     def get_code_prefix_enrichment_record(self, prefix):
         prefix = str(prefix or '').strip().upper()
@@ -2392,6 +2465,7 @@ class VideoDatabase:
                     [movie['code'] for movie in normalized_movies],
                 )
             conn.commit()
+        self.refresh_actor_javtxt_statuses([normalized_name])
 
     def get_actor_enrichment_record(self, actor_name):
         normalized_name = str(actor_name or '').strip()
@@ -3068,6 +3142,7 @@ class VideoDatabase:
                     self._refresh_combined_video_status(cursor, code, '')
                     self._propagate_processed_video_javtxt_state_for_codes(cursor, [code])
                     conn.commit()
+                    self._refresh_web_movie_parent_javtxt_statuses_for_codes([code])
                     return
                 cursor.execute(
                     f'''
@@ -3140,6 +3215,8 @@ class VideoDatabase:
 
             self._refresh_combined_video_status(cursor, code, normalized_javtxt['error'] if normalized_source == JAVTXT_VIDEO_SOURCE else info.get('error', ''))
             conn.commit()
+        if normalized_source == JAVTXT_VIDEO_SOURCE:
+            self._refresh_web_movie_parent_javtxt_statuses_for_codes([code])
 
     def mark_video_no_search_results(self, code, error='未搜索到匹配影片', source_key=DEFAULT_VIDEO_ENRICHMENT_SOURCE):
         self._update_video_source_status(code, source_key, NO_SEARCH_RESULTS_STATUS, error)
@@ -3166,6 +3243,8 @@ class VideoDatabase:
             if normalized_source == JAVTXT_VIDEO_SOURCE:
                 self._propagate_processed_video_javtxt_state_for_codes(cursor, [code])
             conn.commit()
+        if normalized_source == JAVTXT_VIDEO_SOURCE:
+            self._refresh_web_movie_parent_javtxt_statuses_for_codes([code])
 
     def _refresh_combined_video_status(self, cursor, code, error_message=''):
         cursor.execute(
@@ -3495,6 +3574,7 @@ class VideoDatabase:
                 normalized_updates,
             )
             conn.commit()
+        self.refresh_code_prefix_javtxt_statuses(sorted({row[-2] for row in normalized_updates}))
         return len(normalized_updates)
 
     def bulk_update_actor_movies(self, updates):
@@ -3558,6 +3638,7 @@ class VideoDatabase:
                 normalized_updates,
             )
             conn.commit()
+        self.refresh_actor_javtxt_statuses(sorted({row[-2] for row in normalized_updates}))
         return len(normalized_updates)
 
     def refresh_code_prefix_javtxt_statuses(self, prefixes):
@@ -4231,6 +4312,7 @@ class VideoDatabase:
                 self._refresh_combined_video_status(cursor, normalized_code, '')
                 self._propagate_processed_video_javtxt_state_for_codes(cursor, [normalized_code])
                 conn.commit()
+                self._refresh_web_movie_parent_javtxt_statuses_for_codes([normalized_code])
                 return 0
             cursor.execute(
                 '''
@@ -4262,6 +4344,7 @@ class VideoDatabase:
                     normalized_code,
                 ),
             )
+            updated_count = int(cursor.rowcount or 0)
             self._refresh_video_category(
                 cursor,
                 normalized_code,
@@ -4271,7 +4354,8 @@ class VideoDatabase:
             self._refresh_combined_video_status(cursor, normalized_code, normalized_javtxt['error'])
             self._propagate_processed_video_javtxt_state_for_codes(cursor, [normalized_code])
             conn.commit()
-            return int(cursor.rowcount or 0)
+        self._refresh_web_movie_parent_javtxt_statuses_for_codes([normalized_code])
+        return updated_count
 
     def import_local_videos(self, records):
         normalized_records = {}

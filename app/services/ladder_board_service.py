@@ -4,8 +4,10 @@ from app.core.ladder_board import (
     LADDER_ENTITY_CODE_PREFIX,
     get_ladder_board_config,
     ladder_tier_sort_key,
+    normalize_ladder_medal_text,
     normalize_ladder_board_key,
     normalize_ladder_tier,
+    split_ladder_medals,
 )
 from app.services.actor_identifier import is_ignored_actor_name, split_actor_names
 from app.services.code_prefix_library import extract_code_prefix
@@ -42,12 +44,14 @@ class LadderBoardService:
         selected = []
         for entry in selected_entries:
             entity_name = str((entry or {}).get('entity_name', '') or '').strip()
+            medal_text = normalize_ladder_medal_text((entry or {}).get('medal', ''))
             selected.append(
                 {
                     'entity_name': entity_name,
                     'display_name': entity_name,
                     'tier': str((entry or {}).get('tier', '') or '').strip().upper(),
-                    'medal': str((entry or {}).get('medal', '') or '').strip(),
+                    'medal': medal_text,
+                    'medals': split_ladder_medals(medal_text),
                     'local_video_count': int(dict(local_counts).get(entity_name, 0) or 0),
                 }
             )
@@ -97,7 +101,7 @@ class LadderBoardService:
             config['board_key'],
             config['entity_type'],
             normalized_name,
-            str(medal or '').strip(),
+            normalize_ladder_medal_text(medal),
         )
         return self.get_board(config['board_key'])
 
