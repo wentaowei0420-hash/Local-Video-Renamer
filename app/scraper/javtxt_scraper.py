@@ -2,6 +2,7 @@ import re
 from contextlib import contextmanager
 
 from app.core.enrichment_sources import JAVTXT_VIDEO_SOURCE
+from app.core.enrichment_status import NO_VIDEO_DETAIL_STATUS
 from app.core.video_code import compact_video_code
 from app.core.runtime_config import (
     get_javtxt_base_url,
@@ -122,7 +123,22 @@ class JavtxtScraper:
             self._log('INFO', 'JAVTXT 搜索命中详情页', code=normalized_code, detail_url=detail_url)
             page.goto(detail_url, wait_until='domcontentloaded', timeout=60000)
             wait_for_page_ready(page)
-            info = self.parse_movie_info(page, normalized_code)
+            lines = visible_lines(page)
+            if is_not_found_detail_page(page, lines):
+                self._log(
+                    'WARNING',
+                    'JAVTXT 详情页返回 Not Found，按无视频详情处理',
+                    code=normalized_code,
+                    detail_url=detail_url,
+                )
+                return {
+                    'code': normalized_code,
+                    'found': False,
+                    'status': NO_VIDEO_DETAIL_STATUS,
+                    'error': NO_VIDEO_DETAIL_STATUS,
+                    'source': JAVTXT_VIDEO_SOURCE,
+                }
+            info = self.parse_movie_info(page, normalized_code, lines=lines)
             page_code = normalize_code(info.get('page_code', ''))
             if page_code and page_code != normalized_code:
                 self._log(
@@ -172,8 +188,8 @@ class JavtxtScraper:
         )
         return links[0] if links else ''
 
-    def parse_movie_info(self, page, requested_code):
-        lines = visible_lines(page)
+    def parse_movie_info(self, page, requested_code, lines=None):
+        lines = list(lines or visible_lines(page))
         final_url = page.url or ''
         movie_id = extract_javtxt_movie_id(final_url)
         page_code = extract_page_code(lines)
@@ -222,6 +238,28 @@ def visible_lines(page):
     except Exception:
         return []
     return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def is_not_found_detail_page(page, lines=None):
+    normalized_lines = [
+        str(line or '').strip().lower()
+        for line in (lines or [])
+        if str(line or '').strip()
+    ]
+    if not normalized_lines:
+        return False
+
+    if all(line in {'not found', '404', '404 not found'} for line in normalized_lines[:3]) and len(normalized_lines) <= 3:
+        return True
+
+    title_text = ''
+    try:
+        title_text = str(page.title() or '').strip().lower()
+    except Exception:
+        title_text = ''
+    if title_text not in {'not found', '404', '404 not found'}:
+        return False
+    return any(line in {'not found', '404', '404 not found'} for line in normalized_lines[:3]) and len(normalized_lines) <= 3
 
 
 def extract_javtxt_movie_id(url):

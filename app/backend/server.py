@@ -161,10 +161,10 @@ def make_handler(service):
     return VideoBackendHandler
 
 
-def run_server(host=None, port=None):
+def run_server(host=None, port=None, instance_token=''):
     host = str(host or get_backend_host()).strip() or get_backend_host()
     port = int(port or get_backend_port())
-    service = BackendService()
+    service = BackendService(instance_token=instance_token)
     server = ThreadingHTTPServer((host, port), make_handler(service))
     print(f'Local Video Renamer backend listening on http://{host}:{port}')
     server.serve_forever()
@@ -174,8 +174,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', default=get_backend_host())
     parser.add_argument('--port', type=int, default=get_backend_port())
+    parser.add_argument('--instance-token', default='')
     args = parser.parse_args()
-    run_server(args.host, args.port)
+    run_server(args.host, args.port, instance_token=args.instance_token)
 
 
 if __name__ == '__main__':

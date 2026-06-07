@@ -1,4 +1,11 @@
-from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    NO_VIDEO_DETAIL_STATUS,
+    UNENRICHED_STATUS,
+    is_no_result_status,
+)
 from app.core.second_source_actor_text import is_unpublished_actor_text, normalize_second_source_actor_text
 
 
@@ -68,7 +75,7 @@ def classify_search_state(record=None, cached_row=None):
 
     if detail_found and actor_state in (JAVTXT_ACTOR_STATE_NAMED, JAVTXT_ACTOR_STATE_UNPUBLISHED):
         return JAVTXT_SEARCH_STATE_RESOLVED
-    if status == NO_SEARCH_RESULTS_STATUS:
+    if is_no_result_status(status):
         return JAVTXT_SEARCH_STATE_NO_RESULT
     if status == FAILED_STATUS and not detail_found:
         return JAVTXT_SEARCH_STATE_FAILED

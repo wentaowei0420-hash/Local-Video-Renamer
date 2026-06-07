@@ -7,11 +7,11 @@ from pathlib import Path
 
 from app.core.filename_rules import extract_code_from_filename
 from app.core.enrichment_sources import JAVTXT_VIDEO_SOURCE
-from app.core.enrichment_status import ENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
-from app.core.javtxt_video_state import is_javtxt_eligible_movie
+from app.core.enrichment_status import ENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS, NO_VIDEO_DETAIL_STATUS, UNENRICHED_STATUS
+from app.core.javtxt_video_state import is_javtxt_eligible_movie, summarize_javtxt_movies
 from app.core.video_code import compact_video_code, has_supported_video_code, standardize_video_code
 from app.data.database_handler import VideoDatabase
-from app.scraper.javtxt_scraper import extract_page_code
+from app.scraper.javtxt_scraper import extract_page_code, is_not_found_detail_page
 from app.services.code_prefix_entry_parser import extract_code
 from app.services.movie_author_resolver import MovieAuthorResolver
 from app.services.video_category_service import (
@@ -19,6 +19,8 @@ from app.services.video_category_service import (
     MANUAL_CATEGORY_TIER_SECOND,
     MANUAL_CATEGORY_TIER_THIRD,
     classify_manual_category_tier,
+    detect_video_category,
+    VIDEO_CATEGORY_COLLECTION,
 )
 
 
@@ -71,10 +73,69 @@ class VideoCodeStandardizationTest(unittest.TestCase):
     def test_javtxt_page_code_extraction_matches_standard_lookup_code(self):
         self.assertEqual(extract_page_code(['番号', 'bou-001 (h_113bou00001)']), 'BOU001')
 
+    def test_javtxt_not_found_detail_page_is_detected(self):
+        class _FakePage:
+            def title(self):
+                return 'Not Found'
+
+        self.assertTrue(is_not_found_detail_page(_FakePage(), ['Not Found']))
+        self.assertFalse(is_not_found_detail_page(_FakePage(), ['番号', 'STARS-225']))
+
     def test_manual_category_tier_classification(self):
         self.assertEqual(classify_manual_category_tier('甲 乙 丙 丁 戊', '甲 乙 丙 丁 戊'), MANUAL_CATEGORY_TIER_FIRST)
         self.assertEqual(classify_manual_category_tier('甲 乙 丙', '甲 乙 丙'), MANUAL_CATEGORY_TIER_SECOND)
         self.assertEqual(classify_manual_category_tier('', '未公开'), MANUAL_CATEGORY_TIER_THIRD)
+
+    def test_detects_collection_category_from_long_duration_tags(self):
+        self.assertEqual(detect_video_category('16时间以上作品 独家分发 熟女', ''), VIDEO_CATEGORY_COLLECTION)
+        self.assertEqual(detect_video_category('16小时以上作品 精选合集', '甲 乙'), VIDEO_CATEGORY_COLLECTION)
+
+    def test_javtxt_summary_separates_success_no_result_and_no_detail(self):
+        summary = summarize_javtxt_movies(
+            [
+                {
+                    'code': 'ABP-123',
+                    'title': 'ABP-123',
+                    'release_date': '2025-02-01',
+                    'javtxt_release_date': '2025-02-01',
+                    'author': '演员A',
+                    'javtxt_actors': '演员A',
+                    'javtxt_enrichment_status': ENRICHED_STATUS,
+                    'javtxt_movie_id': '123',
+                    'javtxt_url': 'https://javtxt.top/v/123',
+                },
+                {
+                    'code': 'ABP-124',
+                    'title': 'ABP-124',
+                    'release_date': '2025-02-01',
+                    'javtxt_release_date': '2025-02-01',
+                    'javtxt_enrichment_status': NO_SEARCH_RESULTS_STATUS,
+                },
+                {
+                    'code': 'ABP-125',
+                    'title': 'ABP-125',
+                    'release_date': '2025-02-01',
+                    'javtxt_release_date': '2025-02-01',
+                    'javtxt_enrichment_status': NO_VIDEO_DETAIL_STATUS,
+                },
+                {
+                    'code': 'ABP-126',
+                    'title': 'ABP-126',
+                    'release_date': '2025-02-01',
+                    'javtxt_release_date': '2025-02-01',
+                    'javtxt_enrichment_status': '补全失败',
+                },
+            ]
+        )
+
+        self.assertEqual(summary['total_count'], 4)
+        self.assertEqual(summary['enriched_count'], 3)
+        self.assertEqual(summary['completed_count'], 3)
+        self.assertEqual(summary['success_count'], 1)
+        self.assertEqual(summary['pending_count'], 0)
+        self.assertEqual(summary['failed_count'], 1)
+        self.assertEqual(summary['no_search_count'], 1)
+        self.assertEqual(summary['no_detail_count'], 1)
 
 
 class VideoCodeDatabaseMigrationTest(unittest.TestCase):
@@ -474,6 +535,52 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
 
         self.assertEqual([row['code'] for row in rows], ['ABP-123'])
 
+    def test_collection_tag_movies_are_classified_and_not_left_pending_for_javtxt(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.import_local_videos(
+                [
+                    {'code': 'CEMD-046', 'storage_location': 'D:\\videos', 'size': '1GB'},
+                ]
+            )
+
+            db.update_video_enrichment(
+                'CEMD-046',
+                {
+                    'found': True,
+                    'title': '叶月希 22 小时 03 分钟最佳',
+                    'javtxt_title': '叶月希 22 小时 03 分钟最佳',
+                    'author': '叶月希 朝仓琴美 大槻响',
+                    'javtxt_actors': '叶月希 朝仓琴美 大槻响',
+                    'javtxt_actors_raw': '叶月希 朝仓琴美 大槻响',
+                    'release_date': '2021-08-07',
+                    'javtxt_tags': '16时间以上作品 独家分发 熟女 女优精选集',
+                    'javtxt_movie_id': 'cemd00046',
+                    'javtxt_url': 'https://javtxt.example/v/cemd00046',
+                },
+                ENRICHED_STATUS,
+                JAVTXT_VIDEO_SOURCE,
+            )
+
+            with closing(sqlite3.connect(db_path)) as conn:
+                row = conn.execute(
+                    '''
+                    SELECT video_category, javtxt_enrichment_status, javtxt_tags
+                    FROM processed_videos
+                    WHERE code = ?
+                    ''',
+                    ('CEMD-046',),
+                ).fetchone()
+
+            pending_rows = db.list_videos_for_enrichment(10, JAVTXT_VIDEO_SOURCE)
+            pending_count = db.count_pending_video_enrichments(JAVTXT_VIDEO_SOURCE)
+
+        self.assertEqual(row[0], VIDEO_CATEGORY_COLLECTION)
+        self.assertEqual(row[1], UNENRICHED_STATUS)
+        self.assertEqual(pending_rows, [])
+        self.assertEqual(pending_count, 0)
+
     def test_manual_category_candidates_skip_ineligible_old_videos(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
@@ -732,6 +839,58 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
 
         self.assertEqual(prefix_record['javtxt_enrichment_status'], ENRICHED_STATUS)
         self.assertEqual(actor_record['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_save_javtxt_cache_for_video_with_no_detail_status_skips_future_retries(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            db.import_local_videos(
+                [
+                    {'code': 'STARS-225', 'storage_location': 'D:\\videos', 'size': '1GB'},
+                ]
+            )
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    UPDATE processed_videos
+                    SET release_date = ?
+                    WHERE code = ?
+                    ''',
+                    ('2020-04-07', 'STARS-225'),
+                )
+                conn.commit()
+
+            db.save_javtxt_cache_for_video(
+                'STARS-225',
+                {
+                    'title': 'STARS-225',
+                    'release_date': '2020-04-07',
+                },
+                status=NO_VIDEO_DETAIL_STATUS,
+                error='无视频详情',
+            )
+
+            with closing(sqlite3.connect(db_path)) as conn:
+                row = conn.execute(
+                    '''
+                    SELECT javtxt_enrichment_status, javtxt_enrichment_error
+                    FROM processed_videos
+                    WHERE code = ?
+                    ''',
+                    ('STARS-225',),
+                ).fetchone()
+
+            pending_rows = db.list_videos_for_enrichment(10, JAVTXT_VIDEO_SOURCE)
+            pending_count = db.count_pending_video_enrichments(JAVTXT_VIDEO_SOURCE)
+            summary = db.get_video_enrichment_summary(JAVTXT_VIDEO_SOURCE)
+
+        self.assertEqual(row, (NO_VIDEO_DETAIL_STATUS, '无视频详情'))
+        self.assertEqual(pending_rows, [])
+        self.assertEqual(pending_count, 0)
+        self.assertEqual(summary['enriched_count'], 1)
+        self.assertEqual(summary['success_count'], 0)
+        self.assertEqual(summary['no_search_count'], 0)
+        self.assertEqual(summary['no_detail_count'], 1)
 
     def test_replace_code_prefix_movies_refreshes_javtxt_parent_status(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1382,6 +1541,41 @@ class MovieAuthorResolverEligibilityTest(unittest.TestCase):
         self.assertEqual(result['processed_video_count'], 0)
         self.assertEqual(result['pending_video_count'], 0)
         self.assertEqual(entry['code'], 'ACZD072')
+
+    def test_cached_no_detail_with_release_date_is_not_retried(self):
+        resolver = MovieAuthorResolver(
+            _StubCacheDatabase(
+                {
+                    'STARS-225': {
+                        'code': 'STARS-225',
+                        'javtxt_actors': '',
+                        'javtxt_actors_raw': '',
+                        'javtxt_movie_id': '',
+                        'javtxt_url': '',
+                        'javtxt_tags': '',
+                        'javtxt_enrichment_status': NO_VIDEO_DETAIL_STATUS,
+                        'javtxt_release_date': '',
+                        'release_date': '2020-04-07',
+                    }
+                }
+            ),
+            scraper=_FailOnFetchScraper(),
+        )
+        result = resolver.enrich_entries_with_details(
+            [
+                {
+                    'code': 'STARS225',
+                    'title': 'STARS-225',
+                    'author': '',
+                    'release_date': '2020-04-07',
+                }
+            ]
+        )
+
+        entry = result['entries'][0]
+        self.assertEqual(result['processed_video_count'], 0)
+        self.assertEqual(result['pending_video_count'], 0)
+        self.assertEqual(entry['code'], 'STARS225')
 
     def test_same_batch_cached_result_applies_javtxt_detail_fields_to_duplicate_code(self):
         scraper = _EligibleStubScraper()

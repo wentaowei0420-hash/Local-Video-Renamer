@@ -1,4 +1,9 @@
-from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    UNENRICHED_STATUS,
+    is_no_result_status,
+)
 
 
 AVFAN_VIDEO_SOURCE = 'avfan'
@@ -58,7 +63,5 @@ def is_effective_video_pending_status(status):
 
 
 def is_effective_video_terminal_status(status):
-    return normalize_video_enrichment_status(status) in (
-        ENRICHED_STATUS,
-        NO_SEARCH_RESULTS_STATUS,
-    )
+    normalized_status = normalize_video_enrichment_status(status)
+    return normalized_status == ENRICHED_STATUS or is_no_result_status(normalized_status)

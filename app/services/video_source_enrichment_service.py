@@ -143,26 +143,28 @@ class VideoSourceEnrichmentService:
                                 release_date=info.get('release_date', ''),
                             )
                     else:
+                        resolved_status = str(info.get('status', '') or NO_SEARCH_RESULTS_STATUS).strip() or NO_SEARCH_RESULTS_STATUS
                         error_message = info.get('error', '未搜索到匹配影片')
                         self.database.mark_video_no_search_results(
                             code,
                             error_message,
                             source_key=self.source_key,
+                            status=resolved_status,
                         )
                         failed_count += 1
                         results.append(
                             {
                                 'code': code,
-                                'status': NO_SEARCH_RESULTS_STATUS,
+                                'status': resolved_status,
                                 'error': error_message,
                             }
                         )
                         self._log(
                             'WARNING',
-                            '视频未搜索到结果，已写入无搜索结果状态',
+                            '视频未搜索到可用详情，已写入终态状态',
                             code=code,
                             source_key=self.source_key,
-                            status=NO_SEARCH_RESULTS_STATUS,
+                            status=resolved_status,
                             error=error_message,
                         )
                 except HumanVerificationRequiredError as exc:

@@ -7,6 +7,7 @@ from app.core.enrichment_status import (
     ENRICHED_STATUS,
     FAILED_STATUS,
     NO_SEARCH_RESULTS_STATUS,
+    NO_VIDEO_DETAIL_STATUS,
     UNENRICHED_STATUS,
 )
 from app.core.enrichment_sources import (
@@ -688,7 +689,7 @@ class VideoDatabase:
             SELECT rowid
             FROM {table_name}
             WHERE COALESCE(javtxt_release_date, '') = ''
-              AND COALESCE(javtxt_enrichment_status, '') <> ?
+              AND COALESCE(javtxt_enrichment_status, '') NOT IN (?, ?)
               AND (
                     COALESCE(javtxt_enrichment_status, '') <> ?
                  OR COALESCE(javtxt_movie_id, '') <> ''
@@ -696,7 +697,7 @@ class VideoDatabase:
                  OR COALESCE(javtxt_tags, '') <> ''
               )
             ''',
-            (NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS),
+            (NO_SEARCH_RESULTS_STATUS, NO_VIDEO_DETAIL_STATUS, UNENRICHED_STATUS),
         )
         rowids_to_clear = [row[0] for row in cursor.fetchall() if row and row[0] is not None]
         for index in range(0, len(rowids_to_clear), 500):
@@ -1612,146 +1613,6 @@ class VideoDatabase:
             )
         return results
 
-    def list_videos(self, search_text=''):
-        """读取数据库台账，必要时按编号/标题/演员筛选。"""
-        search_text = (search_text or '').strip()
-
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            if search_text:
-                like_value = f'%{search_text}%'
-                cursor.execute('''
-                    SELECT code, title, author, duration, size, storage_location,
-                           avfan_movie_id, release_date, maker, publisher, enrichment_status
-                    FROM processed_videos
-                    WHERE code LIKE ? OR title LIKE ? OR author LIKE ? OR storage_location LIKE ?
-                       OR avfan_movie_id LIKE ? OR release_date LIKE ? OR maker LIKE ? OR publisher LIKE ?
-                       OR enrichment_status LIKE ?
-                    ORDER BY code
-                ''', (
-                    like_value, like_value, like_value, like_value, like_value,
-                    like_value, like_value, like_value, like_value,
-                ))
-            else:
-                cursor.execute('''
-                    SELECT code, title, author, duration, size, storage_location,
-                           avfan_movie_id, release_date, maker, publisher, enrichment_status
-                    FROM processed_videos
-                    ORDER BY code
-                ''')
-
-            return [
-                {
-                    'code': row[0] or '',
-                    'title': row[1] or '',
-                    'author': row[2] or '',
-                    'duration': row[3] or '',
-                    'size': row[4] or '',
-                    'storage_location': row[5] or '',
-                    'avfan_movie_id': row[6] or '',
-                    'release_date': row[7] or '',
-                    'maker': row[8] or '',
-                    'publisher': row[9] or '',
-                    'enrichment_status': row[10] or '未补全',
-                }
-                for row in cursor.fetchall()
-            ]
-
-    def list_videos_for_enrichment(self, limit):
-        """读取需要补全的未补全视频。"""
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT code, title, author
-                FROM processed_videos
-                WHERE COALESCE(enrichment_status, '未补全') != '已补全'
-                ORDER BY code
-                LIMIT ?
-            ''', (int(limit),))
-
-            return [
-                {
-                    'code': row[0] or '',
-                    'title': row[1] or '',
-                    'author': row[2] or '',
-                }
-                for row in cursor.fetchall()
-            ]
-
-    def update_video_enrichment(self, code, info, status='已补全'):
-        """写入网页补全信息。"""
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute('PRAGMA journal_mode=WAL')
-            cursor.execute('PRAGMA synchronous=NORMAL')
-            cursor.execute('''
-                UPDATE processed_videos
-                SET avfan_movie_id = ?,
-                    release_date = ?,
-                    maker = ?,
-                    publisher = ?,
-                    enrichment_status = ?,
-                    enrichment_error = ?,
-                    enriched_at = CURRENT_TIMESTAMP
-                WHERE code = ?
-            ''', (
-                info.get('avfan_movie_id', ''),
-                info.get('release_date', ''),
-                join_values(info.get('maker')),
-                join_values(info.get('publisher')),
-                status,
-                info.get('error', ''),
-                code,
-            ))
-            conn.commit()
-
-    def mark_video_enrichment_failed(self, code, error):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE processed_videos
-                SET enrichment_status = '补全失败',
-                    enrichment_error = ?,
-                    enriched_at = CURRENT_TIMESTAMP
-                WHERE code = ?
-            ''', (error, code))
-            conn.commit()
-
-    def count_videos_by_enrichment_status(self, status):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT COUNT(*)
-                FROM processed_videos
-                WHERE COALESCE(enrichment_status, '未补全') = ?
-            ''', (status,))
-            return int(cursor.fetchone()[0] or 0)
-
-    def get_video_enrichment_summary(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT
-                    COUNT(*) AS total_count,
-                    SUM(
-                        CASE
-                            WHEN COALESCE(enrichment_status, '鏈ˉ鍏?) = '宸茶ˉ鍏? THEN 1
-                            ELSE 0
-                        END
-                    ) AS enriched_count
-                FROM processed_videos
-            ''')
-            row = cursor.fetchone() or (0, 0)
-
-        total_count = int(row[0] or 0)
-        enriched_count = int(row[1] or 0)
-        unenriched_count = max(total_count - enriched_count, 0)
-        return {
-            'enriched_count': enriched_count,
-            'unenriched_count': unenriched_count,
-            'total_count': total_count,
-        }
-
     def _refresh_code_prefix_combined_status(self, cursor, prefix):
         cursor.execute(
             '''
@@ -1907,91 +1768,6 @@ class VideoDatabase:
                 path_id,
             ))
             conn.commit()
-
-    def list_videos_for_enrichment(self, limit):
-        """只返回仍应继续补全的视频，跳过已补全和无搜索结果。"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT code, title, author
-                FROM processed_videos
-                WHERE COALESCE(enrichment_status, ?) IN (?, ?)
-                ORDER BY code
-                LIMIT ?
-            ''', (
-                UNENRICHED_STATUS,
-                UNENRICHED_STATUS,
-                FAILED_STATUS,
-                int(limit),
-            ))
-
-            return [
-                {
-                    'code': row[0] or '',
-                    'title': row[1] or '',
-                    'author': row[2] or '',
-                }
-                for row in cursor.fetchall()
-            ]
-
-    def mark_video_no_search_results(self, code, error='未搜索到匹配影片'):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE processed_videos
-                SET enrichment_status = ?,
-                    enrichment_error = ?,
-                    enriched_at = CURRENT_TIMESTAMP
-                WHERE code = ?
-            ''', (NO_SEARCH_RESULTS_STATUS, error, code))
-            conn.commit()
-
-    def mark_video_enrichment_failed(self, code, error):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE processed_videos
-                SET enrichment_status = ?,
-                    enrichment_error = ?,
-                    enriched_at = CURRENT_TIMESTAMP
-                WHERE code = ?
-            ''', (FAILED_STATUS, error, code))
-            conn.commit()
-
-    def count_videos_by_enrichment_status(self, status):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT COUNT(*)
-                FROM processed_videos
-                WHERE COALESCE(enrichment_status, ?) = ?
-            ''', (UNENRICHED_STATUS, status))
-            return int(cursor.fetchone()[0] or 0)
-
-    def get_video_enrichment_summary(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT
-                    COUNT(*) AS total_count,
-                    SUM(
-                        CASE
-                            WHEN COALESCE(enrichment_status, ?) = ? THEN 1
-                            ELSE 0
-                        END
-                    ) AS enriched_count
-                FROM processed_videos
-            ''', (UNENRICHED_STATUS, ENRICHED_STATUS))
-            row = cursor.fetchone() or (0, 0)
-
-        total_count = int(row[0] or 0)
-        enriched_count = int(row[1] or 0)
-        unenriched_count = max(total_count - enriched_count, 0)
-        return {
-            'enriched_count': enriched_count,
-            'unenriched_count': unenriched_count,
-            'total_count': total_count,
-        }
 
     def list_code_prefix_enrichment_records(self):
         with self._connect() as conn:
@@ -3138,6 +2914,12 @@ class VideoDatabase:
             if normalized_source == JAVTXT_VIDEO_SOURCE:
                 if not self._is_processed_video_javtxt_eligible(cursor, code, info):
                     self._update_processed_video_javtxt_metadata(cursor, code, info)
+                    self._refresh_video_category(
+                        cursor,
+                        code,
+                        tags_text=normalized_javtxt['sanitized_javtxt_tags'],
+                        actors_text=normalized_javtxt['sanitized_javtxt_actors'] or normalized_javtxt['sanitized_author'],
+                    )
                     self._clear_processed_video_javtxt_state(cursor, code)
                     self._refresh_combined_video_status(cursor, code, '')
                     self._propagate_processed_video_javtxt_state_for_codes(cursor, [code])
@@ -3218,8 +3000,14 @@ class VideoDatabase:
         if normalized_source == JAVTXT_VIDEO_SOURCE:
             self._refresh_web_movie_parent_javtxt_statuses_for_codes([code])
 
-    def mark_video_no_search_results(self, code, error='未搜索到匹配影片', source_key=DEFAULT_VIDEO_ENRICHMENT_SOURCE):
-        self._update_video_source_status(code, source_key, NO_SEARCH_RESULTS_STATUS, error)
+    def mark_video_no_search_results(
+        self,
+        code,
+        error='未搜索到匹配影片',
+        source_key=DEFAULT_VIDEO_ENRICHMENT_SOURCE,
+        status=NO_SEARCH_RESULTS_STATUS,
+    ):
+        self._update_video_source_status(code, source_key, status, error)
 
     def mark_video_enrichment_failed(self, code, error, source_key=DEFAULT_VIDEO_ENRICHMENT_SOURCE):
         self._update_video_source_status(code, source_key, FAILED_STATUS, error)
@@ -3318,9 +3106,12 @@ class VideoDatabase:
             if normalized_source == JAVTXT_VIDEO_SOURCE:
                 total_count = 0
                 enriched_count = 0
+                completed_count = 0
+                success_count = 0
                 pending_count = 0
                 failed_count = 0
                 no_search_count = 0
+                no_detail_count = 0
 
                 for record in self._list_processed_video_javtxt_records(cursor):
                     if not is_javtxt_eligible_movie(record):
@@ -3329,9 +3120,15 @@ class VideoDatabase:
                     search_state = classify_search_state(record, cached_row=record)
                     if search_state == JAVTXT_SEARCH_STATE_NO_RESULT:
                         enriched_count += 1
-                        no_search_count += 1
+                        completed_count += 1
+                        if str(record.get('javtxt_enrichment_status', '') or '').strip() == NO_VIDEO_DETAIL_STATUS:
+                            no_detail_count += 1
+                        else:
+                            no_search_count += 1
                     elif is_resolved_search_state(search_state):
                         enriched_count += 1
+                        completed_count += 1
+                        success_count += 1
                     elif search_state == JAVTXT_SEARCH_STATE_FAILED:
                         failed_count += 1
                     else:
@@ -3339,10 +3136,13 @@ class VideoDatabase:
 
                 return {
                     'enriched_count': enriched_count,
+                    'completed_count': completed_count,
+                    'success_count': success_count,
                     'unenriched_count': pending_count,
                     'pending_count': pending_count,
                     'failed_count': failed_count,
                     'no_search_count': no_search_count,
+                    'no_detail_count': no_detail_count,
                     'total_count': total_count,
                 }
             else:
@@ -3355,22 +3155,52 @@ class VideoDatabase:
                                 WHEN COALESCE({status_column}, ?) = ? THEN 1
                                 ELSE 0
                             END
-                        ) AS enriched_count
+                        ) AS success_count,
+                        SUM(
+                            CASE
+                                WHEN COALESCE({status_column}, ?) = ? THEN 1
+                                ELSE 0
+                            END
+                        ) AS failed_count,
+                        SUM(
+                            CASE
+                                WHEN COALESCE({status_column}, ?) = ? THEN 1
+                                ELSE 0
+                            END
+                        ) AS no_search_count,
+                        SUM(
+                            CASE
+                                WHEN COALESCE({status_column}, ?) = ? THEN 1
+                                ELSE 0
+                            END
+                        ) AS no_detail_count
                     FROM processed_videos
                     ''',
-                    (UNENRICHED_STATUS, ENRICHED_STATUS),
+                    (
+                        UNENRICHED_STATUS, ENRICHED_STATUS,
+                        UNENRICHED_STATUS, FAILED_STATUS,
+                        UNENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS,
+                        UNENRICHED_STATUS, NO_VIDEO_DETAIL_STATUS,
+                    ),
                 )
-            row = cursor.fetchone() or (0, 0)
+            row = cursor.fetchone() or (0, 0, 0, 0, 0)
 
         total_count = int(row[0] or 0)
-        enriched_count = int(row[1] or 0)
-        unenriched_count = max(total_count - enriched_count, 0)
+        success_count = int(row[1] or 0)
+        failed_count = int(row[2] or 0)
+        no_search_count = int(row[3] or 0)
+        no_detail_count = int(row[4] or 0)
+        enriched_count = success_count + no_search_count + no_detail_count
+        unenriched_count = max(total_count - enriched_count - failed_count, 0)
         return {
             'enriched_count': enriched_count,
+            'completed_count': enriched_count,
+            'success_count': success_count,
             'unenriched_count': unenriched_count,
             'pending_count': unenriched_count,
-            'failed_count': 0,
-            'no_search_count': 0,
+            'failed_count': failed_count,
+            'no_search_count': no_search_count,
+            'no_detail_count': no_detail_count,
             'total_count': total_count,
         }
 
@@ -4308,6 +4138,12 @@ class VideoDatabase:
             cursor = conn.cursor()
             if not self._is_processed_video_javtxt_eligible(cursor, normalized_code, info):
                 self._update_processed_video_javtxt_metadata(cursor, normalized_code, info)
+                self._refresh_video_category(
+                    cursor,
+                    normalized_code,
+                    tags_text=normalized_javtxt['sanitized_javtxt_tags'],
+                    actors_text=normalized_javtxt['sanitized_javtxt_actors'] or normalized_javtxt['sanitized_author'],
+                )
                 self._clear_processed_video_javtxt_state(cursor, normalized_code)
                 self._refresh_combined_video_status(cursor, normalized_code, '')
                 self._propagate_processed_video_javtxt_state_for_codes(cursor, [normalized_code])

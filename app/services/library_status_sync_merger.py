@@ -3,6 +3,7 @@ from app.core.enrichment_status import (
     FAILED_STATUS,
     NO_SEARCH_RESULTS_STATUS,
     UNENRICHED_STATUS,
+    is_no_result_status,
 )
 from app.core.javtxt_entry_state import (
     JAVTXT_SEARCH_STATE_FAILED,
@@ -38,7 +39,10 @@ def build_merged_movie_snapshot(code, library_rows, processed_row=None, cache_ro
         return {}
 
     best_search_candidate, best_search_state = _pick_best_search_candidate(candidates)
-    merged_status = _status_from_search_state(best_search_state)
+    merged_status = _status_from_search_state(
+        best_search_state,
+        best_search_candidate.get("javtxt_enrichment_status", UNENRICHED_STATUS),
+    )
     merged_author = _pick_best_author(candidates)
     merged_author_raw = _pick_best_author_raw(candidates, merged_author)
 
@@ -272,10 +276,13 @@ def _pick_best_category(candidates):
     return ""
 
 
-def _status_from_search_state(search_state):
+def _status_from_search_state(search_state, fallback_status=UNENRICHED_STATUS):
     if search_state == JAVTXT_SEARCH_STATE_RESOLVED:
         return ENRICHED_STATUS
     if search_state == JAVTXT_SEARCH_STATE_NO_RESULT:
+        normalized_fallback = str(fallback_status or "").strip()
+        if is_no_result_status(normalized_fallback):
+            return normalized_fallback
         return NO_SEARCH_RESULTS_STATUS
     if search_state == JAVTXT_SEARCH_STATE_FAILED:
         return FAILED_STATUS

@@ -2,7 +2,13 @@ import re
 
 from app.core.video_code import standardize_video_code
 from app.core.javtxt_video_state import is_javtxt_eligible_movie
-from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    UNENRICHED_STATUS,
+    is_no_result_status,
+)
 from app.core.javtxt_entry_state import (
     JAVTXT_SEARCH_STATE_FAILED,
     JAVTXT_SEARCH_STATE_NO_RESULT,
@@ -338,7 +344,7 @@ class MovieAuthorResolver:
                     if not author:
                         error_message = 'JAVTXT 未返回演员信息'
             else:
-                status = NO_SEARCH_RESULTS_STATUS
+                status = str(info.get('status', '') or NO_SEARCH_RESULTS_STATUS).strip() or NO_SEARCH_RESULTS_STATUS
                 error_message = str(info.get('error', '') or 'JAVTXT 未找到匹配结果')
         except Exception as exc:
             status = FAILED_STATUS
@@ -400,6 +406,9 @@ class MovieAuthorResolver:
         if search_state == JAVTXT_SEARCH_STATE_RESOLVED:
             return ENRICHED_STATUS
         if search_state == JAVTXT_SEARCH_STATE_NO_RESULT:
+            normalized_fallback = str(fallback_status or '').strip()
+            if is_no_result_status(normalized_fallback):
+                return normalized_fallback
             return NO_SEARCH_RESULTS_STATUS
         if search_state == JAVTXT_SEARCH_STATE_FAILED:
             return FAILED_STATUS

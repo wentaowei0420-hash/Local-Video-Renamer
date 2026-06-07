@@ -8,7 +8,13 @@ from app.core.javtxt_entry_state import (
     JAVTXT_SEARCH_STATE_RESOLVED,
     classify_search_state,
 )
-from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    NO_VIDEO_DETAIL_STATUS,
+    UNENRICHED_STATUS,
+)
 from app.services.video_category_service import (
     COLLECTION_TAG_KEYWORDS,
     VIDEO_CATEGORY_COLLECTION,
@@ -102,9 +108,12 @@ def summarize_javtxt_movies(movies, cache_rows=None):
     summary = {
         'total_count': 0,
         'enriched_count': 0,
+        'completed_count': 0,
+        'success_count': 0,
         'pending_count': 0,
         'failed_count': 0,
         'no_search_count': 0,
+        'no_detail_count': 0,
     }
 
     for movie in movies or []:
@@ -112,18 +121,40 @@ def summarize_javtxt_movies(movies, cache_rows=None):
             continue
 
         summary['total_count'] += 1
-        state = classify_javtxt_movie(movie, get_javtxt_cache_row(cache_rows, movie))
+        cached_row = get_javtxt_cache_row(cache_rows, movie)
+        state = classify_javtxt_movie(movie, cached_row)
         if state == JAVTXT_VIDEO_STATE_COMPLETED:
             summary['enriched_count'] += 1
+            summary['completed_count'] += 1
+            summary['success_count'] += 1
         elif state == JAVTXT_VIDEO_STATE_NO_RESULT:
             summary['enriched_count'] += 1
-            summary['no_search_count'] += 1
+            summary['completed_count'] += 1
+            no_result_status = _resolve_no_result_status(movie, cached_row)
+            if no_result_status == NO_VIDEO_DETAIL_STATUS:
+                summary['no_detail_count'] += 1
+            else:
+                summary['no_search_count'] += 1
         elif state == JAVTXT_VIDEO_STATE_FAILED:
             summary['failed_count'] += 1
         else:
             summary['pending_count'] += 1
 
     return summary
+
+
+def _resolve_no_result_status(movie, cached_row=None):
+    status = str(
+        (movie or {}).get(
+            'javtxt_enrichment_status',
+            (cached_row or {}).get('javtxt_enrichment_status', ''),
+        ) or ''
+    ).strip()
+    if status == NO_VIDEO_DETAIL_STATUS:
+        return NO_VIDEO_DETAIL_STATUS
+    if status == NO_SEARCH_RESULTS_STATUS:
+        return NO_SEARCH_RESULTS_STATUS
+    return NO_SEARCH_RESULTS_STATUS
 
 
 def build_javtxt_library_status(movies, cache_rows=None):

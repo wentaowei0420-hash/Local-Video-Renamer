@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import time
+import uuid
 
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -131,6 +132,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         super().__init__()
         self.pending_renames = []
         self.backend_process = None
+        self.backend_instance_token = ''
         self.backend_client = BackendClient()
         self.enrichment_thread = None
         self.enrichment_worker = None
@@ -159,16 +161,15 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         self.reset_progress_widgets()
 
     def ensure_backend_running(self):
+        self.backend_instance_token = uuid.uuid4().hex
         health = self.get_backend_health()
-        if self.is_backend_compatible(health):
-            return
         if health is not None:
-            self.stop_stale_backend()
+            self.stop_backend_on_port()
 
         backend_script = PROJECT_ROOT / 'backend_server.py'
         creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         self.backend_process = subprocess.Popen(
-            [sys.executable, str(backend_script)],
+            [sys.executable, str(backend_script), '--instance-token', self.backend_instance_token],
             cwd=str(backend_script.parent),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -178,7 +179,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         deadline = time.time() + 5
         while time.time() < deadline:
             health = self.get_backend_health()
-            if self.is_backend_compatible(health):
+            if self.is_expected_backend_instance(health):
                 return
             time.sleep(0.2)
 
@@ -196,13 +197,20 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
     def is_backend_compatible(self, health):
         return bool(health) and str(health.get('backend_revision') or '') == BACKEND_API_REVISION
 
-    def stop_stale_backend(self):
+    def is_expected_backend_instance(self, health):
+        return (
+            self.is_backend_compatible(health)
+            and str((health or {}).get('backend_instance_token') or '').strip() == self.backend_instance_token
+        )
+
+    def stop_backend_on_port(self):
         if self.backend_process and self.backend_process.poll() is None:
             self.backend_process.terminate()
             try:
                 self.backend_process.wait(timeout=3)
             except Exception:
                 pass
+            self.backend_process = None
             return
 
         creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -241,6 +249,20 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
 
         if target_pids:
             time.sleep(0.5)
+
+    def stop_owned_backend(self):
+        if self.backend_process and self.backend_process.poll() is None:
+            self.backend_process.terminate()
+            try:
+                self.backend_process.wait(timeout=3)
+            except Exception:
+                pass
+            self.backend_process = None
+            return
+
+        health = self.get_backend_health()
+        if self.is_expected_backend_instance(health):
+            self.stop_backend_on_port()
 
     def init_ui(self):
         self.setWindowTitle(tr('main.title'))
@@ -1283,8 +1305,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
             )
             event.ignore()
             return
-        if self.backend_process and self.backend_process.poll() is None:
-            self.backend_process.terminate()
+        self.stop_owned_backend()
         super().closeEvent(event)
 
     @staticmethod

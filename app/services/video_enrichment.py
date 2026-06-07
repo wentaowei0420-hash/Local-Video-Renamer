@@ -53,12 +53,13 @@ class VideoEnrichmentService:
                             'info': info,
                         })
                     else:
+                        resolved_status = str(info.get('status', '') or NO_SEARCH_RESULTS_STATUS).strip() or NO_SEARCH_RESULTS_STATUS
                         error_message = info.get('error', '未搜索到匹配影片')
-                        self.database.mark_video_no_search_results(code, error_message)
+                        self.database.mark_video_no_search_results(code, error_message, status=resolved_status)
                         failed_count += 1
                         results.append({
                             'code': code,
-                            'status': NO_SEARCH_RESULTS_STATUS,
+                            'status': resolved_status,
                             'error': error_message,
                         })
                 except HumanVerificationRequiredError as exc:

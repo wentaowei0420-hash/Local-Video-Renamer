@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from threading import Event, Lock
 
@@ -28,8 +29,10 @@ from app.services.video_ladder_tag_service import VideoLadderTagService
 
 
 class BackendService:
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, instance_token=''):
         self.base_dir = Path(base_dir or PROJECT_ROOT)
+        self.instance_token = str(instance_token or '').strip()
+        self.process_id = os.getpid()
         self.db = VideoDatabase(DATABASE_FILE)
         self.video_ladder_tag_service = VideoLadderTagService(self.db)
         self.local_video_library = LocalVideoLibraryService(self.db)
@@ -68,6 +71,9 @@ class BackendService:
         return {
             'ok': True,
             'backend_revision': BACKEND_API_REVISION,
+            'backend_instance_token': self.instance_token,
+            'backend_process_id': self.process_id,
+            'project_root': str(self.base_dir),
             'database_loaded': self.database_loaded,
             'db_path': str(self.db.db_path),
             'enrichment_running': self.enrichment_running,
