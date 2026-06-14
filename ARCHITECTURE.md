@@ -9,7 +9,7 @@
 ```text
 PyQt GUI
   -> backend_client.py
-  -> http://127.0.0.1:8765
+  -> http://127.0.0.1:8766
   -> backend_server.py
   -> backend_service.py
   -> video_renamer_api.py / actor_identifier.py / path_library.py / avfan_scraper.py / database_handler.py
@@ -720,7 +720,7 @@ python .\backend_server.py
 启动后可访问：
 
 ```text
-http://127.0.0.1:8765/health
+http://127.0.0.1:8766/health
 ```
 
 ## 当前模块清单

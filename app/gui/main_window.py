@@ -2,6 +2,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 from PyQt5.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -165,25 +166,47 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         health = self.get_backend_health()
         if health is not None:
             self.stop_backend_on_port()
+            health = self.get_backend_health()
+            if health is not None:
+                raise RuntimeError(tr('main.backend_port_in_use', port=get_backend_port()))
 
         backend_script = PROJECT_ROOT / 'backend_server.py'
         creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         self.backend_process = subprocess.Popen(
-            [sys.executable, str(backend_script), '--instance-token', self.backend_instance_token],
+            [self._get_backend_python_executable(), str(backend_script), '--instance-token', self.backend_instance_token],
             cwd=str(backend_script.parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
             creationflags=creation_flags,
         )
 
         deadline = time.time() + 5
         while time.time() < deadline:
+            if self.backend_process.poll() is not None:
+                stdout_text, stderr_text = self.backend_process.communicate()
+                detail = (stderr_text or stdout_text or '').strip() or tr('main.backend_process_exited_no_detail')
+                raise RuntimeError(tr('main.backend_process_exited', detail=detail))
             health = self.get_backend_health()
             if self.is_expected_backend_instance(health):
                 return
             time.sleep(0.2)
 
+        health = self.get_backend_health()
+        if health is not None:
+            raise RuntimeError(tr('main.backend_port_in_use', port=get_backend_port()))
         raise RuntimeError(tr('main.backend_start_timeout'))
+
+    @staticmethod
+    def _get_backend_python_executable():
+        current_executable = Path(sys.executable)
+        if current_executable.name.lower() == 'pythonw.exe':
+            console_python = current_executable.with_name('python.exe')
+            if console_python.exists():
+                return str(console_python)
+        return str(current_executable)
 
     def is_backend_alive(self):
         return self.get_backend_health() is not None
@@ -1324,10 +1347,18 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    window = VidNormApp()
+    try:
+        window = VidNormApp()
+    except Exception as exc:
+        QMessageBox.critical(
+            None,
+            tr('main.start_failed_title'),
+            tr('main.start_failed_message', error=str(exc)),
+        )
+        return 1
     window.show()
-    sys.exit(app.exec_())
+    return app.exec_()
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

@@ -1,5 +1,7 @@
+import sys
+
 from app.gui.main_window import main
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

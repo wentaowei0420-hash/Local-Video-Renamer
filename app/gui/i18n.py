@@ -349,6 +349,16 @@ BASE_GUI_TEXTS = {
     'video.detail.headers': ['视频编号', '视频标题', '作者/演员', '视频分类', '发布日期'],
 }
 
+BASE_GUI_TEXTS.update(
+    {
+        'main.backend_port_in_use': '后端端口 {port} 已被现有进程占用，程序无法接管。请先结束旧的后台进程后再重试。',
+        'main.backend_process_exited': '后端服务启动失败：{detail}',
+        'main.backend_process_exited_no_detail': '后端进程已退出，但没有返回更多错误信息。',
+        'main.start_failed_title': '启动失败',
+        'main.start_failed_message': '系统启动失败：\n{error}',
+    }
+)
+
 
 def _build_gui_texts():
     merged = deepcopy(BASE_GUI_TEXTS)
