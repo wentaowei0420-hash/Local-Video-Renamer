@@ -1,8 +1,12 @@
 import unittest
+from datetime import date, timedelta
 
 from app.backend.service import BackendService
+from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS
 from app.services.actor_detail_library import ActorDetailLibrary
+from app.services.code_prefix_library import CodePrefixLibrary
 from app.services.code_prefix_detail_library import CodePrefixDetailLibrary
+from app.services.video_category_service import VIDEO_CATEGORY_SINGLE
 
 
 class BackendVideoListOptimizationTest(unittest.TestCase):
@@ -145,6 +149,94 @@ class TargetedDetailQueryTest(unittest.TestCase):
         detail = CodePrefixDetailLibrary(FakeDatabase()).get_prefix_detail('NEM')
 
         self.assertEqual([row['code'] for row in detail['local_videos']], ['NEM-001'])
+
+
+class LibraryListMetadataTest(unittest.TestCase):
+    def test_actor_list_attaches_update_status_from_targeted_rows(self):
+        recent_date = (date.today() - timedelta(days=90)).isoformat()
+
+        class FakeDatabase:
+            def list_actors(self, search_text=''):
+                return [
+                    {
+                        'name': 'ActorA',
+                        'actor_id': '1',
+                        'birthday': '',
+                        'age': '',
+                        'avfan_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                    }
+                ]
+
+            def list_local_videos_by_actor_names(self, actor_names):
+                return [
+                    {
+                        'code': 'AAA-001',
+                        'title': 'Recent Video',
+                        'author': 'ActorA',
+                        'release_date': recent_date,
+                        'video_category': VIDEO_CATEGORY_SINGLE,
+                    }
+                ]
+
+            def list_actor_movies_by_names(self, actor_names):
+                return {}
+
+            def list_ladder_entries(self, board_key=None, entity_type=None):
+                return [{'entity_name': 'ActorA', 'tier': 'A'}]
+
+        service = BackendService.__new__(BackendService)
+        service.db = FakeDatabase()
+        service.video_filter_service = _PassThroughFilterService()
+        service.ensure_database_loaded = lambda: None
+
+        result = BackendService.list_actors(service)
+
+        self.assertEqual(result['actors'][0]['update_status'], 'active')
+        self.assertEqual(result['actors'][0]['ladder_tier'], 'A')
+        self.assertEqual(result['actors'][0]['avfan_enrichment_status'], ENRICHED_STATUS)
+        self.assertEqual(result['actors'][0]['javtxt_enrichment_status'], ENRICHED_STATUS)
+
+    def test_code_prefix_list_includes_raw_status_and_update_status(self):
+        recent_date = (date.today() - timedelta(days=120)).isoformat()
+
+        class FakeDatabase:
+            def list_videos(self):
+                return [
+                    {
+                        'code': 'NEM-001',
+                        'title': 'Local Video',
+                        'author': 'Actor A',
+                        'release_date': recent_date,
+                        'video_category': VIDEO_CATEGORY_SINGLE,
+                    }
+                ]
+
+            def list_code_prefix_enrichment_records(self):
+                return {
+                    'NEM': {
+                        'avfan_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_enrichment_status': FAILED_STATUS,
+                        'avfan_total_videos': 12,
+                    }
+                }
+
+            def list_hidden_code_prefixes(self):
+                return set()
+
+            def list_code_prefix_movies_by_prefixes(self, prefixes):
+                return {'NEM': []}
+
+            def list_ladder_entries(self, board_key=None, entity_type=None):
+                return [{'entity_name': 'NEM', 'tier': 'S'}]
+
+        rows = CodePrefixLibrary(FakeDatabase(), _PassThroughFilterService()).list_prefixes()
+
+        self.assertEqual(rows[0]['prefix'], 'NEM')
+        self.assertEqual(rows[0]['ladder_tier'], 'S')
+        self.assertEqual(rows[0]['avfan_enrichment_status'], ENRICHED_STATUS)
+        self.assertEqual(rows[0]['javtxt_enrichment_status'], FAILED_STATUS)
+        self.assertEqual(rows[0]['update_status'], 'active')
 
 
 class _PassThroughFilterService:

@@ -13,6 +13,7 @@ from app.core.video_code import standardize_video_code
 from app.services.actor_identifier import split_actor_names
 from app.services.code_prefix_library import extract_code_prefix
 from app.services.detail_update_status_service import resolve_update_status
+from app.services.detail_web_link_service import build_actor_detail_web_url
 from app.services.video_category_summary import build_video_category_distribution
 
 
@@ -45,12 +46,14 @@ class ActorDetailLibrary:
         birthday = actor_row.get('birthday', '')
         ladder_entry = self.database.get_ladder_entry(LADDER_BOARD_ACTOR, LADDER_ENTITY_ACTOR, actor_name)
 
+        actor_id = actor_row.get('actor_id', '') or web_record.get('actor_id', '')
         return {
             'name': actor_name,
             'birthday': birthday,
             'age': normalize_actor_age_for_display(actor_row.get('age', ''), birthday),
             'matched': bool(actor_row.get('matched')),
-            'actor_id': actor_row.get('actor_id', '') or web_record.get('actor_id', ''),
+            'actor_id': actor_id,
+            'web_url': build_actor_detail_web_url(actor_name, actor_id=actor_id),
             'ladder_tier': str((ladder_entry or {}).get('tier', '') or '').strip().upper(),
             'update_status': resolve_update_status(local_videos + eligible_web_movies),
             'local_video_count': len(local_videos),

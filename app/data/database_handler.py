@@ -1687,9 +1687,12 @@ class VideoDatabase(
                 {
                     'name': actor_name,
                     'birthday': row[1] or '',
+                    'raw_age': row[2] or '',
                     'age': normalize_actor_age_for_display(row[2] or '', row[1] or ''),
                     'matched': bool(row[3]),
                     'actor_id': row[4] or '',
+                    'avfan_enrichment_status': str((record or {}).get('avfan_enrichment_status', '') or '').strip() or UNENRICHED_STATUS,
+                    'javtxt_enrichment_status': str((record or {}).get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS,
                     'enrichment_status': enrichment_status or UNENRICHED_STATUS,
                 }
             )

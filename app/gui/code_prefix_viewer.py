@@ -36,13 +36,16 @@ from app.gui.code_prefix_library_sorting import (
 from app.gui.code_prefix_detail_viewer import CodePrefixDetailViewerWindow
 from app.gui.deferred_reload_mixin import DeferredReloadMixin
 from app.gui.i18n import tr
+from app.services.detail_quick_filter_service import CODE_PREFIX_DETAIL_FILTER_OPTIONS, DETAIL_FILTER_ALL, filter_library_rows
 
 
 class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
     def __init__(self, backend_client, parent=None):
         super().__init__(parent)
         self.backend_client = backend_client
+        self.all_rows = []
         self.rows = []
+        self.detail_quick_filter_key = DETAIL_FILTER_ALL
         self.editing_prefix = None
         self.editing_row = None
         self.action_buttons = {}
@@ -62,6 +65,14 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(tr('code_prefix.viewer.search_placeholder'))
         self.search_input.textChanged.connect(self.filter_data)
+
+        self.detail_filter_combo = QComboBox()
+        for filter_key in CODE_PREFIX_DETAIL_FILTER_OPTIONS:
+            self.detail_filter_combo.addItem(tr(f'detail.quick_filter.{filter_key}'), filter_key)
+        initial_filter_index = self.detail_filter_combo.findData(self.detail_quick_filter_key)
+        self.detail_filter_combo.setCurrentIndex(max(initial_filter_index, 0))
+        self.btn_apply_detail_filter = QPushButton(tr('detail.apply_filter'))
+        self.btn_apply_detail_filter.clicked.connect(self.apply_quick_filter_from_controls)
 
         self.sort_field_combo = QComboBox()
         for sort_field in CODE_PREFIX_SORT_FIELDS:
@@ -86,6 +97,9 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
 
         top_layout.addWidget(QLabel(tr('common.filter_realtime')))
         top_layout.addWidget(self.search_input)
+        top_layout.addWidget(QLabel(tr('detail.quick_filter_label')))
+        top_layout.addWidget(self.detail_filter_combo)
+        top_layout.addWidget(self.btn_apply_detail_filter)
         top_layout.addWidget(QLabel(tr('common.sort_field_label')))
         top_layout.addWidget(self.sort_field_combo)
         top_layout.addWidget(QLabel(tr('common.sort_order_label')))
@@ -111,6 +125,8 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.set_async_busy_widgets(
             [
                 self.search_input,
+                self.detail_filter_combo,
+                self.btn_apply_detail_filter,
                 self.sort_field_combo,
                 self.sort_order_combo,
                 self.btn_apply_sort,
@@ -209,8 +225,13 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             QMessageBox.critical(self, tr('common.save_failed'), tr('code_prefix.viewer.sort_save_failed', error=exc))
             return
 
-        self.rows = self.sorted_rows(self.rows)
-        self.render_rows(self.rows)
+        self.rebuild_visible_rows()
+
+    def apply_quick_filter_from_controls(self):
+        current_prefix = self.current_selected_prefix()
+        target_prefix = self.apply_detail_quick_filter(self.detail_filter_combo.currentData(), current_prefix)
+        if not target_prefix:
+            self.table.clearSelection()
 
     def apply_sort_settings_to_controls(self):
         sort_field = self.sort_settings.get('sort_field', DEFAULT_CODE_PREFIX_SORT_FIELD)
@@ -226,6 +247,10 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             self.sort_settings.get('sort_field', DEFAULT_CODE_PREFIX_SORT_FIELD),
             self.sort_settings.get('sort_order', DEFAULT_CODE_PREFIX_SORT_ORDER),
         )
+
+    def rebuild_visible_rows(self):
+        self.rows = self.sorted_rows(filter_library_rows(self.all_rows, self.detail_quick_filter_key))
+        self.render_rows(self.rows)
 
     def clear_edit_state(self):
         self.editing_prefix = None
@@ -386,10 +411,14 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
                 prefixes.append(item.text().strip())
         return prefixes
 
+    def current_selected_prefix(self):
+        prefixes = self.selected_prefixes()
+        return prefixes[0] if prefixes else ''
+
     def _on_load_data_finished(self, result):
         self.clear_edit_state()
-        self.rows = self.sorted_rows(list((result or {}).get('rows', []) or []))
-        self.render_rows(self.rows)
+        self.all_rows = list((result or {}).get('rows', []) or [])
+        self.rebuild_visible_rows()
 
     def _on_reset_finished(self, result):
         self._on_load_data_finished(result)
@@ -400,3 +429,41 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             tr('common.reset_completed'),
             tr('code_prefix.viewer.reset_completed_message', count=reset_count, source_label=source_label),
         )
+
+    def apply_detail_quick_filter(self, filter_key, current_prefix=''):
+        self.detail_quick_filter_key = str(filter_key or DETAIL_FILTER_ALL).strip() or DETAIL_FILTER_ALL
+        self.rebuild_visible_rows()
+        target_prefix = str(current_prefix or '').strip().upper()
+        visible_prefixes = self.detail_navigation_keys()
+        if target_prefix in visible_prefixes:
+            self.select_prefix_row(target_prefix)
+            return target_prefix
+        if visible_prefixes:
+            self.select_prefix_row(visible_prefixes[0])
+            return visible_prefixes[0]
+        return ''
+
+    def current_detail_quick_filter(self):
+        return self.detail_quick_filter_key
+
+    def detail_navigation_keys(self):
+        return [
+            str((row or {}).get('prefix', '') or '').strip().upper()
+            for row in self.rows
+            if str((row or {}).get('prefix', '') or '').strip()
+        ]
+
+    def neighbor_detail_key(self, current_prefix, offset):
+        prefixes = self.detail_navigation_keys()
+        target_prefix = str(current_prefix or '').strip().upper()
+        if target_prefix not in prefixes:
+            return ''
+        index = prefixes.index(target_prefix) + int(offset or 0)
+        if index < 0 or index >= len(prefixes):
+            return ''
+        return prefixes[index]
+
+    def select_prefix_row(self, prefix):
+        row = self.find_row_by_prefix(prefix)
+        if row >= 0:
+            self.table.selectRow(row)

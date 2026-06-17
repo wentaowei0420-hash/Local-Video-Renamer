@@ -93,6 +93,13 @@ def get_avfan_actor_search_url(actor_name):
     )
 
 
+def get_avfan_actor_page_url(actor_id):
+    normalized_actor_id = quote(str(actor_id or '').strip())
+    if not normalized_actor_id:
+        raise RuntimeError('actor_id 不能为空')
+    return f'{get_avfan_base_url()}/casts/{normalized_actor_id}'
+
+
 def get_avfan_code_prefix_url(prefix, page_number):
     template = _get_text_setting('AVFAN_CODE_PREFIX_URL_TEMPLATE', required=True)
     return template.format(

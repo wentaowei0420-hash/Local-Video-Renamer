@@ -4,6 +4,11 @@ from pathlib import Path
 from app.core.backend_protocol import BACKEND_API_REVISION
 from app.core.combo_enrichment import get_combo_label, normalize_combo_key
 from app.core.enrichment_targets import ACTOR_LIBRARY_TARGET, VIDEO_LIBRARY_TARGET
+from app.core.javtxt_video_state import is_javtxt_eligible_movie
+from app.core.ladder_board import (
+    LADDER_BOARD_ACTOR,
+    LADDER_ENTITY_ACTOR,
+)
 from app.core.project_paths import DATABASE_FILE, PROJECT_ROOT
 from app.data.database_handler import VideoDatabase
 from app.scraper.avfan_scraper import reset_avfan_browser_profile
@@ -22,6 +27,8 @@ from app.services.enrichment_task_state import EnrichmentTaskState
 from app.services.library_admin_service import LibraryAdminService
 from app.services.library_enrichment_service import LibraryEnrichmentService
 from app.services.library_status_sync_service import LibraryStatusSyncService
+from app.services.actor_identifier import split_actor_names
+from app.services.detail_update_status_service import resolve_update_status
 from app.services.ladder_board_service import LadderBoardService
 from app.services.local_video_library_service import LocalVideoLibraryService
 from app.services.path_library import PathLibrary, summarize_paths
@@ -46,7 +53,7 @@ class BackendService:
             self.video_ladder_tag_service,
             self.video_filter_service,
         )
-        self.code_prefix_library = CodePrefixLibrary(self.db)
+        self.code_prefix_library = CodePrefixLibrary(self.db, self.video_filter_service)
         self.code_prefix_video_category_bulk_service = CodePrefixVideoCategoryBulkService(self.db)
         self.data_center_service = DataCenterService(self.db, self.video_filter_service)
         self.library_admin_service = LibraryAdminService(self.db)
@@ -169,7 +176,10 @@ class BackendService:
 
     def list_actors(self, search_text=''):
         self.ensure_database_loaded()
-        return {'actors': self.db.list_actors(search_text)}
+        rows = list(self.db.list_actors(search_text))
+        self._attach_actor_ladder_tiers(rows)
+        self._attach_actor_update_status(rows)
+        return {'actors': rows}
 
     def get_actor_detail(self, actor_name):
         self.ensure_database_loaded()
@@ -248,6 +258,57 @@ class BackendService:
                 if code:
                     rows_by_code[code] = dict(row or {})
         return list(rows_by_code.values())
+
+    def _attach_actor_update_status(self, rows):
+        actor_names = [
+            str((row or {}).get('name', '') or '').strip()
+            for row in (rows or [])
+            if str((row or {}).get('name', '') or '').strip()
+        ]
+        if not actor_names:
+            return rows
+
+        local_rows = []
+        if hasattr(self.db, 'list_local_videos_by_actor_names'):
+            local_rows = list(self.db.list_local_videos_by_actor_names(actor_names))
+        web_movies_by_actor = {}
+        if hasattr(self.db, 'list_actor_movies_by_names'):
+            web_movies_by_actor = self.db.list_actor_movies_by_names(actor_names)
+
+        local_movies_by_actor = {name: [] for name in actor_names}
+        actor_name_set = set(actor_names)
+        for row in local_rows:
+            current_names = {
+                str(name or '').strip()
+                for name in split_actor_names((row or {}).get('author', ''))
+                if str(name or '').strip()
+            }
+            for actor_name in actor_name_set.intersection(current_names):
+                local_movies_by_actor.setdefault(actor_name, []).append(dict(row or {}))
+
+        for row in rows:
+            actor_name = str((row or {}).get('name', '') or '').strip()
+            visible_local_movies = self.video_filter_service.filter_video_rows(local_movies_by_actor.get(actor_name, []))
+            eligible_web_movies = [
+                dict(movie or {})
+                for movie in self.video_filter_service.filter_video_rows(web_movies_by_actor.get(actor_name, []))
+                if is_javtxt_eligible_movie(movie)
+            ]
+            row['update_status'] = resolve_update_status(visible_local_movies + eligible_web_movies)
+        return rows
+
+    def _attach_actor_ladder_tiers(self, rows):
+        tier_map = {}
+        if hasattr(self.db, 'list_ladder_entries'):
+            tier_map = {
+                str((entry or {}).get('entity_name', '') or '').strip(): str((entry or {}).get('tier', '') or '').strip().upper()
+                for entry in self.db.list_ladder_entries(LADDER_BOARD_ACTOR, LADDER_ENTITY_ACTOR)
+                if str((entry or {}).get('entity_name', '') or '').strip()
+            }
+        for row in rows or []:
+            actor_name = str((row or {}).get('name', '') or '').strip()
+            row['ladder_tier'] = tier_map.get(actor_name, str((row or {}).get('ladder_tier', '') or '').strip().upper())
+        return rows
 
     def list_paths(self):
         paths = []

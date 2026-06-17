@@ -1,4 +1,7 @@
+from PyQt5.QtCore import QUrl
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QGroupBox,
     QHBoxLayout,
@@ -42,6 +45,36 @@ class CodePrefixDetailViewerWindow(QDialog):
         scroll_area.setWidget(content)
 
         layout = QVBoxLayout(content)
+
+        action_group = QGroupBox(tr('detail.action_group'))
+        action_group.setStyleSheet(
+            'QGroupBox { margin-top: 14px; }'
+            'QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }'
+        )
+        action_layout = QHBoxLayout(action_group)
+        action_layout.setContentsMargins(12, 18, 12, 10)
+        action_layout.setSpacing(10)
+        self.btn_prev_item = QPushButton(tr('detail.prev_item'))
+        self.btn_prev_item.clicked.connect(self.show_previous_item)
+        action_layout.addWidget(self.btn_prev_item)
+        self.btn_next_item = QPushButton(tr('detail.next_item'))
+        self.btn_next_item.clicked.connect(self.show_next_item)
+        action_layout.addWidget(self.btn_next_item)
+        self.btn_copy_prefix = QPushButton(tr('code_prefix.detail.copy_prefix'))
+        self.btn_copy_prefix.clicked.connect(self.copy_prefix)
+        action_layout.addWidget(self.btn_copy_prefix)
+        self.btn_open_web = QPushButton(tr('detail.open_web'))
+        self.btn_open_web.clicked.connect(self.open_web_page)
+        action_layout.addWidget(self.btn_open_web)
+        for button in (
+            self.btn_prev_item,
+            self.btn_next_item,
+            self.btn_copy_prefix,
+            self.btn_open_web,
+        ):
+            button.setMinimumHeight(30)
+            button.setMinimumWidth(92)
+        action_layout.addStretch()
 
         summary_group = QGroupBox(tr('code_prefix.detail.summary_group'))
         summary_layout = QVBoxLayout(summary_group)
@@ -106,6 +139,7 @@ class CodePrefixDetailViewerWindow(QDialog):
         movie_top_layout.addWidget(self.btn_movie_detail)
         movie_layout.addLayout(movie_top_layout)
 
+        layout.addWidget(action_group)
         layout.addWidget(summary_group)
         layout.addWidget(stats_group)
         layout.addWidget(local_movie_group)
@@ -160,6 +194,27 @@ class CodePrefixDetailViewerWindow(QDialog):
         self.movie_count_label.setText(tr('code_prefix.detail.movie_count', count=len(rows)))
         self.btn_local_movie_detail.setEnabled(bool(local_rows))
         self.btn_movie_detail.setEnabled(bool(rows))
+        self.btn_open_web.setEnabled(bool(str(self.detail.get('web_url', '') or '').strip()))
+        self._refresh_navigation_buttons()
+
+    def copy_prefix(self):
+        prefix = str(self.detail.get('prefix', '') or self.prefix).strip().upper()
+        if prefix:
+            QApplication.clipboard().setText(prefix)
+
+    def open_web_page(self):
+        target_url = str(self.detail.get('web_url', '') or '').strip()
+        if not target_url:
+            QMessageBox.information(self, tr('common.no_data'), tr('detail.open_web_missing'))
+            return
+        if not QDesktopServices.openUrl(QUrl(target_url)):
+            QMessageBox.warning(self, tr('common.operation_failed'), tr('detail.open_web_failed', url=target_url))
+
+    def show_previous_item(self):
+        self._jump_to_neighbor(-1)
+
+    def show_next_item(self):
+        self._jump_to_neighbor(1)
 
     def apply_uncategorized_video_category(self):
         selected_category = self.category_batch_widget.selected_category()
@@ -236,3 +291,36 @@ class CodePrefixDetailViewerWindow(QDialog):
     def on_video_categories_updated(self):
         if self.isVisible():
             self.load_data()
+
+    def _detail_host(self):
+        detail_host = self.parent()
+        if detail_host is None or not hasattr(detail_host, 'neighbor_detail_key'):
+            return None
+        return detail_host
+
+    def _refresh_navigation_buttons(self):
+        detail_host = self._detail_host()
+        if detail_host is None:
+            self.btn_prev_item.setEnabled(False)
+            self.btn_next_item.setEnabled(False)
+            return
+        self.btn_prev_item.setEnabled(bool(detail_host.neighbor_detail_key(self.prefix, -1)))
+        self.btn_next_item.setEnabled(bool(detail_host.neighbor_detail_key(self.prefix, 1)))
+
+    def _jump_to_neighbor(self, offset):
+        detail_host = self._detail_host()
+        if detail_host is None:
+            self._refresh_navigation_buttons()
+            return
+        target_prefix = detail_host.neighbor_detail_key(self.prefix, offset)
+        if target_prefix:
+            self._switch_prefix(target_prefix)
+            return
+        self._refresh_navigation_buttons()
+
+    def _switch_prefix(self, prefix):
+        self.prefix = str(prefix or '').strip().upper()
+        self.setWindowTitle(tr('code_prefix.detail.title', prefix=self.prefix))
+        if hasattr(self.parent(), 'select_prefix_row'):
+            self.parent().select_prefix_row(self.prefix)
+        self.load_data()

@@ -8,6 +8,8 @@ from app.core.javtxt_video_state import (
 )
 from app.core.enrichment_sources import build_library_enrichment_status_text
 from app.core.enrichment_status import UNENRICHED_STATUS
+from app.core.ladder_board import LADDER_BOARD_CODE_PREFIX, LADDER_ENTITY_CODE_PREFIX
+from app.services.detail_update_status_service import resolve_update_status
 
 
 SEPARATED_PREFIX_RE = re.compile(r'^\s*([A-Za-z0-9]+?)[\s_-]+\d', re.IGNORECASE)
@@ -40,8 +42,9 @@ def extract_code_prefix(code):
 
 
 class CodePrefixLibrary:
-    def __init__(self, database):
+    def __init__(self, database, video_filter_service=None):
         self.database = database
+        self.video_filter_service = video_filter_service
 
     def list_prefixes(self, search_text=''):
         rows = self.database.list_videos()
@@ -57,13 +60,16 @@ class CodePrefixLibrary:
                 hidden_prefixes = self.database.list_hidden_code_prefixes()
             except Exception:
                 hidden_prefixes = set()
+        ladder_tier_map = self._load_ladder_tier_map()
         grouped = {}
+        local_rows_by_prefix = {}
 
         for row in rows:
             prefix = extract_code_prefix(row.get('code', ''))
             if not prefix or prefix in hidden_prefixes:
                 continue
             grouped[prefix] = grouped.get(prefix, 0) + 1
+            local_rows_by_prefix.setdefault(prefix, []).append(dict(row or {}))
 
         search = str(search_text or '').strip().upper()
         prefixes = [prefix for prefix in sorted(grouped) if not search or search in prefix]
@@ -76,11 +82,21 @@ class CodePrefixLibrary:
             movies = movies_by_prefix.get(prefix, [])
             earliest_release_date, latest_release_date = self._collect_date_range(movies)
             enrichment_status = self._build_live_enrichment_status(enrichment)
+            visible_local_rows = self._filter_visible_rows(local_rows_by_prefix.get(prefix, []))
+            eligible_movies = [
+                dict(movie or {})
+                for movie in self._filter_visible_rows(movies)
+                if is_javtxt_eligible_movie(movie)
+            ]
 
             results.append({
                 'prefix': prefix,
+                'ladder_tier': ladder_tier_map.get(prefix, ''),
                 'video_count': grouped[prefix],
                 'enrichment_status': enrichment_status,
+                'avfan_enrichment_status': str((enrichment or {}).get('avfan_enrichment_status', '') or '').strip() or UNENRICHED_STATUS,
+                'javtxt_enrichment_status': str((enrichment or {}).get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS,
+                'update_status': resolve_update_status(visible_local_rows + eligible_movies),
                 'avfan_total_pages': enrichment.get('avfan_total_pages', 0),
                 'avfan_total_videos': enrichment.get('avfan_total_videos', 0),
                 'earliest_release_date': earliest_release_date,
@@ -108,3 +124,17 @@ class CodePrefixLibrary:
 
         javtxt_record_status = str((enrichment or {}).get('javtxt_enrichment_status', '')).strip() or UNENRICHED_STATUS
         return build_library_enrichment_status_text(avfan_status, javtxt_record_status)
+
+    def _filter_visible_rows(self, rows):
+        if self.video_filter_service is None:
+            return list(rows or [])
+        return self.video_filter_service.filter_video_rows(rows)
+
+    def _load_ladder_tier_map(self):
+        if not hasattr(self.database, 'list_ladder_entries'):
+            return {}
+        return {
+            str((entry or {}).get('entity_name', '') or '').strip().upper(): str((entry or {}).get('tier', '') or '').strip().upper()
+            for entry in self.database.list_ladder_entries(LADDER_BOARD_CODE_PREFIX, LADDER_ENTITY_CODE_PREFIX)
+            if str((entry or {}).get('entity_name', '') or '').strip()
+        }

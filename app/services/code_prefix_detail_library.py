@@ -10,6 +10,7 @@ from app.core.video_code import standardize_video_code
 from app.services.actor_identifier import split_actor_names
 from app.services.code_prefix_library import extract_code_prefix
 from app.services.detail_update_status_service import resolve_update_status
+from app.services.detail_web_link_service import build_code_prefix_detail_web_url
 from app.services.video_category_summary import build_video_category_distribution, count_uncategorized_video_rows
 
 
@@ -40,6 +41,7 @@ class CodePrefixDetailLibrary:
 
         return {
             'prefix': prefix,
+            'web_url': build_code_prefix_detail_web_url(prefix),
             'ladder_tier': str((ladder_entry or {}).get('tier', '') or '').strip().upper(),
             'update_status': resolve_update_status(local_videos + eligible_movies),
             'video_count': len(local_videos),

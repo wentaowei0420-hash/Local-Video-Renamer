@@ -1,4 +1,7 @@
+from PyQt5.QtCore import QUrl
+from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QGroupBox,
     QHBoxLayout,
@@ -41,6 +44,36 @@ class ActorDetailViewerWindow(QDialog):
         scroll_area.setWidget(content)
 
         layout = QVBoxLayout(content)
+
+        action_group = QGroupBox(tr('detail.action_group'))
+        action_group.setStyleSheet(
+            'QGroupBox { margin-top: 14px; }'
+            'QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; }'
+        )
+        action_layout = QHBoxLayout(action_group)
+        action_layout.setContentsMargins(12, 18, 12, 10)
+        action_layout.setSpacing(10)
+        self.btn_prev_item = QPushButton(tr('detail.prev_item'))
+        self.btn_prev_item.clicked.connect(self.show_previous_item)
+        action_layout.addWidget(self.btn_prev_item)
+        self.btn_next_item = QPushButton(tr('detail.next_item'))
+        self.btn_next_item.clicked.connect(self.show_next_item)
+        action_layout.addWidget(self.btn_next_item)
+        self.btn_copy_actor_name = QPushButton(tr('actor.detail.copy_actor_name'))
+        self.btn_copy_actor_name.clicked.connect(self.copy_actor_name)
+        action_layout.addWidget(self.btn_copy_actor_name)
+        self.btn_open_web = QPushButton(tr('detail.open_web'))
+        self.btn_open_web.clicked.connect(self.open_web_page)
+        action_layout.addWidget(self.btn_open_web)
+        for button in (
+            self.btn_prev_item,
+            self.btn_next_item,
+            self.btn_copy_actor_name,
+            self.btn_open_web,
+        ):
+            button.setMinimumHeight(30)
+            button.setMinimumWidth(92)
+        action_layout.addStretch()
 
         basic_group = QGroupBox(tr('actor.detail.basic_group'))
         basic_layout = QVBoxLayout(basic_group)
@@ -140,6 +173,7 @@ class ActorDetailViewerWindow(QDialog):
         web_movie_top_layout.addWidget(self.btn_web_movie_detail)
         web_movie_layout.addLayout(web_movie_top_layout)
 
+        layout.addWidget(action_group)
         layout.addWidget(basic_group)
         layout.addWidget(local_group)
         layout.addWidget(web_group)
@@ -211,6 +245,27 @@ class ActorDetailViewerWindow(QDialog):
         self.web_movie_count_label.setText(tr('actor.detail.web_movie_count', count=len(web_rows)))
         self.btn_local_movie_detail.setEnabled(bool(local_rows))
         self.btn_web_movie_detail.setEnabled(bool(web_rows))
+        self.btn_open_web.setEnabled(bool(str(self.detail.get('web_url', '') or '').strip()))
+        self._refresh_navigation_buttons()
+
+    def copy_actor_name(self):
+        actor_name = str(self.detail.get('name', '') or self.actor_name).strip()
+        if actor_name:
+            QApplication.clipboard().setText(actor_name)
+
+    def open_web_page(self):
+        target_url = str(self.detail.get('web_url', '') or '').strip()
+        if not target_url:
+            QMessageBox.information(self, tr('common.no_data'), tr('detail.open_web_missing'))
+            return
+        if not QDesktopServices.openUrl(QUrl(target_url)):
+            QMessageBox.warning(self, tr('common.operation_failed'), tr('detail.open_web_failed', url=target_url))
+
+    def show_previous_item(self):
+        self._jump_to_neighbor(-1)
+
+    def show_next_item(self):
+        self._jump_to_neighbor(1)
 
     def show_local_movie_detail(self):
         rows = list(self.detail.get('local_videos', []) or [])
@@ -245,3 +300,39 @@ class ActorDetailViewerWindow(QDialog):
     def on_video_categories_updated(self):
         if self.isVisible():
             self.load_data()
+
+    def _detail_host(self):
+        detail_host = self.parent()
+        if detail_host is None:
+            return None
+        required_methods = ('neighbor_detail_key',)
+        if any(not hasattr(detail_host, method_name) for method_name in required_methods):
+            return None
+        return detail_host
+
+    def _refresh_navigation_buttons(self):
+        detail_host = self._detail_host()
+        if detail_host is None:
+            self.btn_prev_item.setEnabled(False)
+            self.btn_next_item.setEnabled(False)
+            return
+        self.btn_prev_item.setEnabled(bool(detail_host.neighbor_detail_key(self.actor_name, -1)))
+        self.btn_next_item.setEnabled(bool(detail_host.neighbor_detail_key(self.actor_name, 1)))
+
+    def _jump_to_neighbor(self, offset):
+        detail_host = self._detail_host()
+        if detail_host is None:
+            self._refresh_navigation_buttons()
+            return
+        target_name = detail_host.neighbor_detail_key(self.actor_name, offset)
+        if target_name:
+            self._switch_actor(target_name)
+            return
+        self._refresh_navigation_buttons()
+
+    def _switch_actor(self, actor_name):
+        self.actor_name = str(actor_name or '').strip()
+        self.setWindowTitle(tr('actor.detail.title', actor_name=self.actor_name))
+        if hasattr(self.parent(), 'select_actor_row'):
+            self.parent().select_actor_row(self.actor_name)
+        self.load_data()
