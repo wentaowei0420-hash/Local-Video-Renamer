@@ -35,18 +35,22 @@ class BackendService:
         self.instance_token = str(instance_token or '').strip()
         self.process_id = os.getpid()
         self.db = VideoDatabase(DATABASE_FILE)
+        self.video_filter_service = VideoFilterService()
         self.video_ladder_tag_service = VideoLadderTagService(self.db)
         self.local_video_library = LocalVideoLibraryService(self.db)
-        self.actor_detail_library = ActorDetailLibrary(self.db, self.video_ladder_tag_service)
+        self.actor_detail_library = ActorDetailLibrary(self.db, self.video_ladder_tag_service, self.video_filter_service)
         self.actor_library_sync_service = ActorLibrarySyncService(self.db)
-        self.code_prefix_detail_library = CodePrefixDetailLibrary(self.db, self.video_ladder_tag_service)
+        self.code_prefix_detail_library = CodePrefixDetailLibrary(
+            self.db,
+            self.video_ladder_tag_service,
+            self.video_filter_service,
+        )
         self.code_prefix_library = CodePrefixLibrary(self.db)
         self.data_center_service = DataCenterService(self.db)
         self.library_admin_service = LibraryAdminService(self.db)
         self.library_status_sync_service = LibraryStatusSyncService(self.db)
         self.ladder_board_service = LadderBoardService(self.db)
         self.path_library = PathLibrary()
-        self.video_filter_service = VideoFilterService()
         self.enrichment_progress = EnrichmentProgressService()
         self.combo_progress = ComboProgressService()
         self.database_loaded = False
@@ -95,7 +99,7 @@ class BackendService:
 
     def list_videos(self, search_text=''):
         rows = self.video_ladder_tag_service.enrich_video_rows(self.db.list_videos())
-        visible_rows = self.video_filter_service.filter_library_rows(rows)
+        visible_rows = self.video_filter_service.filter_video_rows(rows)
         return {'videos': self.video_ladder_tag_service.filter_video_rows(visible_rows, search_text)}
 
     def get_video_enrichment_summary(self):
@@ -126,7 +130,11 @@ class BackendService:
 
     def list_videos_requiring_manual_category(self):
         self.ensure_database_loaded()
-        return self.db.list_videos_requiring_manual_category()
+        overview = self.db.list_videos_requiring_manual_category()
+        return {
+            **dict(overview or {}),
+            'videos': self.video_filter_service.filter_video_rows((overview or {}).get('videos', []) or []),
+        }
 
     def stage_video_category(self, code, category):
         self.ensure_database_loaded()

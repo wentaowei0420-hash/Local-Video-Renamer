@@ -33,6 +33,15 @@ class BackendReuseDecisionTest(unittest.TestCase):
 
         self.assertFalse(VidNormApp.is_reusable_backend_instance(health))
 
+    def test_extract_backend_pid_reads_numeric_health_pid(self):
+        self.assertEqual(
+            VidNormApp._extract_backend_pid({'backend_process_id': 4321}),
+            '4321',
+        )
+
+    def test_extract_backend_pid_rejects_invalid_pid(self):
+        self.assertEqual(VidNormApp._extract_backend_pid({'backend_process_id': 'abc'}), '')
+
 
 if __name__ == '__main__':
     unittest.main()

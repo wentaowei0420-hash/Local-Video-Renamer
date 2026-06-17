@@ -21,6 +21,7 @@ from app.core.video_filter_rules import (
     get_filter_keywords,
 )
 from app.core.video_filter_settings import load_video_filter_settings, save_video_filter_settings
+from app.gui.video_filter_events import video_filter_event_bus
 from app.gui.i18n import tr
 
 
@@ -147,6 +148,7 @@ class VideoFilterDialog(QDialog):
             QMessageBox.critical(self, tr('common.save_failed'), tr('video.filter.save_failed', error=exc))
             return
 
+        video_filter_event_bus.rules_saved.emit()
         QMessageBox.information(
             self,
             tr('video.filter.save_success'),

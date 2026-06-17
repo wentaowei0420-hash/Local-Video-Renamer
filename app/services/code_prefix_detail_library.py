@@ -10,9 +10,10 @@ from app.services.actor_identifier import split_actor_names
 
 
 class CodePrefixDetailLibrary:
-    def __init__(self, database, video_ladder_tag_service=None):
+    def __init__(self, database, video_ladder_tag_service=None, video_filter_service=None):
         self.database = database
         self.video_ladder_tag_service = video_ladder_tag_service
+        self.video_filter_service = video_filter_service
 
     def get_prefix_detail(self, prefix):
         prefix = str(prefix or '').strip().upper()
@@ -22,7 +23,7 @@ class CodePrefixDetailLibrary:
         enrichment = self.database.get_code_prefix_enrichment_record(prefix)
         medal_maps = self._load_medal_maps()
         raw_movies = self._enrich_rows(self.database.list_code_prefix_movies(prefix), medal_maps=medal_maps)
-        movies = self._filter_eligible_movies(raw_movies)
+        movies = self._filter_visible_movies(self._filter_eligible_movies(raw_movies))
         eligible_movies = list(movies)
         earliest_release_date, latest_release_date = self._collect_date_range(movies)
         cache_rows = self.database.get_javtxt_actor_cache_by_codes(
@@ -50,6 +51,11 @@ class CodePrefixDetailLibrary:
 
     def _filter_eligible_movies(self, movies):
         return [movie for movie in (movies or []) if self._is_eligible_movie(movie)]
+
+    def _filter_visible_movies(self, movies):
+        if self.video_filter_service is None:
+            return list(movies or [])
+        return self.video_filter_service.filter_video_rows(movies)
 
     def _load_medal_maps(self):
         if self.video_ladder_tag_service is None:

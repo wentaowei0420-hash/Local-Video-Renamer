@@ -3736,6 +3736,8 @@ class VideoDatabase:
                         'title': row[1] or '',
                         'avfan_url': '',
                         'javtxt_url': row[2] or '',
+                        'javtxt_tags': row[6] or '',
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
                         'manual_tier': self._classify_manual_category_tier(row[3], row[4]),
                         'actor_count': count_video_actors(row[3]),
                     }
@@ -4067,6 +4069,8 @@ class VideoDatabase:
             'title': str(title or '').strip() or normalized_code,
             'avfan_url': str(avfan_url or '').strip(),
             'javtxt_url': str(javtxt_url or '').strip(),
+            'javtxt_tags': str(javtxt_tags or '').strip(),
+            'javtxt_enrichment_status': ENRICHED_STATUS,
             'manual_tier': manual_tier,
             'actor_count': count_video_actors(author),
         }
@@ -4081,6 +4085,8 @@ class VideoDatabase:
         if not current.get('manual_tier') and candidate['manual_tier']:
             current['manual_tier'] = candidate['manual_tier']
             current['actor_count'] = candidate['actor_count']
+        if not current.get('javtxt_tags') and candidate['javtxt_tags']:
+            current['javtxt_tags'] = candidate['javtxt_tags']
         if (
             current.get('title', '').strip().upper() == normalized_code
             or len(current.get('title', '')) < len(candidate['title'])

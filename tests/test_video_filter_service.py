@@ -53,12 +53,31 @@ class VideoFilterServiceTest(unittest.TestCase):
 
         visible_rows = service.filter_library_rows(
             [
-                {'code': 'AAA-001', 'title': '普通标题', 'javtxt_tags': '公开标签'},
+                {'code': 'CCC-001', 'title': '别的标题', 'javtxt_tags': '公开标签'},
                 {'code': 'BBB-002', 'title': '别的标题', 'javtxt_tags': '隐藏标签 其他标签'},
             ]
         )
 
-        self.assertEqual([row['code'] for row in visible_rows], ['AAA-001'])
+        self.assertEqual([row['code'] for row in visible_rows], ['CCC-001'])
+
+    def test_post_enrichment_hide_uses_code_and_title_but_not_for_unenriched_rows(self):
+        service = VideoFilterService(settings_loader=lambda: {
+            'rules': {
+                'code': ['skip'],
+                'title': ['合集'],
+                'javtxt_tags': [],
+            }
+        })
+
+        visible_rows = service.filter_video_rows(
+            [
+                {'code': 'SKIP-001', 'title': '普通标题', 'javtxt_enrichment_status': UNENRICHED_STATUS},
+                {'code': 'SKIP-002', 'title': '普通标题', 'javtxt_enrichment_status': '已补全'},
+                {'code': 'AAA-003', 'title': '合集作品', 'javtxt_url': 'https://example.com/3'},
+            ]
+        )
+
+        self.assertEqual([row['code'] for row in visible_rows], ['SKIP-001'])
 
     def test_default_filter_settings_include_legacy_title_and_tag_keywords(self):
         self.assertIn('VR', DEFAULT_VIDEO_FILTER_SETTINGS['rules']['title'])

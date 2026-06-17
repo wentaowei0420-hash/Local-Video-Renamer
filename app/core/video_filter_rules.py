@@ -1,6 +1,7 @@
 import re
 
 from app.core.javtxt_video_state import COLLECTION_TITLE_KEYWORDS
+from app.core.enrichment_status import UNENRICHED_STATUS
 from app.services.video_category_service import COLLECTION_TAG_KEYWORDS
 
 
@@ -20,6 +21,8 @@ PRE_ENRICHMENT_FILTER_FIELDS = (
 )
 
 LIBRARY_HIDDEN_FILTER_FIELDS = (
+    FILTER_FIELD_CODE,
+    FILTER_FIELD_TITLE,
     FILTER_FIELD_JAVTXT_TAGS,
 )
 
@@ -82,6 +85,8 @@ def should_skip_video_before_enrichment(video, settings):
 
 
 def should_hide_video_from_library(video, settings):
+    if not is_post_enrichment_video(video):
+        return False
     normalized = normalize_video_filter_settings(settings)
     rules = normalized.get('rules', {})
     return any(
@@ -118,3 +123,16 @@ def _matches_single_keyword(raw_value, normalized_value, keyword):
         normalized_text = raw_value.replace('Ｖ', 'V').replace('Ｒ', 'R')
         return bool(VR_MARKER_RE.search(normalized_text))
     return normalized_keyword in normalized_value
+
+
+def is_post_enrichment_video(video):
+    row = dict(video or {})
+    if str(row.get('manual_tier', '') or '').strip():
+        return True
+    if any(
+        str(row.get(field_name, '') or '').strip()
+        for field_name in ('javtxt_movie_id', 'javtxt_url', 'javtxt_title', 'javtxt_actors', 'javtxt_tags')
+    ):
+        return True
+    status = str(row.get('javtxt_enrichment_status', '') or '').strip()
+    return bool(status) and status != UNENRICHED_STATUS

@@ -16,9 +16,10 @@ YEAR_RE = re.compile(r'(19|20)\d{2}')
 
 
 class ActorDetailLibrary:
-    def __init__(self, database, video_ladder_tag_service=None):
+    def __init__(self, database, video_ladder_tag_service=None, video_filter_service=None):
         self.database = database
         self.video_ladder_tag_service = video_ladder_tag_service
+        self.video_filter_service = video_filter_service
 
     def get_actor_detail(self, actor_name):
         actor_name = str(actor_name or '').strip()
@@ -27,9 +28,9 @@ class ActorDetailLibrary:
 
         actor_row = self._find_actor(actor_name)
         medal_maps = self._load_medal_maps()
-        local_videos = self._find_local_actor_videos(actor_name, medal_maps=medal_maps)
+        local_videos = self._filter_visible_movies(self._find_local_actor_videos(actor_name, medal_maps=medal_maps))
         raw_web_movies = self._enrich_rows(self.database.list_actor_movies(actor_name), medal_maps=medal_maps)
-        web_movies = self._filter_eligible_movies(raw_web_movies)
+        web_movies = self._filter_visible_movies(self._filter_eligible_movies(raw_web_movies))
         eligible_web_movies = list(web_movies)
         web_record = self.database.get_actor_enrichment_record(actor_name)
         web_earliest, web_latest = self._collect_date_range(web_movies)
@@ -94,6 +95,11 @@ class ActorDetailLibrary:
 
     def _filter_eligible_movies(self, rows):
         return [row for row in (rows or []) if self._is_eligible_movie(row)]
+
+    def _filter_visible_movies(self, rows):
+        if self.video_filter_service is None:
+            return list(rows or [])
+        return self.video_filter_service.filter_video_rows(rows)
 
     def _build_live_web_enrichment_status(self, enrichment, movies, cache_rows):
         avfan_status = str((enrichment or {}).get('avfan_enrichment_status', '')).strip()

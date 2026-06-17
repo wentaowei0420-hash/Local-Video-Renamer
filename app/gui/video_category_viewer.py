@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 
 from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.i18n import tr
+from app.gui.video_filter_events import video_filter_event_bus
 from app.services.video_category_service import (
     MANUAL_CATEGORY_TIER_FIRST,
     MANUAL_CATEGORY_TIER_SECOND,
@@ -402,6 +403,7 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         )
         self.staged_count = 0
         self._init_async_task_host()
+        video_filter_event_bus.rules_saved.connect(self.on_filter_rules_saved)
         self.init_ui()
         self.load_data()
 
@@ -761,6 +763,13 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         self._update_tier_button_state()
         self._update_batch_button_state()
         self.table.viewport().update()
+
+    def on_filter_rules_saved(self):
+        if self.is_async_task_running():
+            return
+        if not self.isVisible():
+            return
+        self.load_data()
 
     def closeEvent(self, event):
         if self.block_close_while_async_running(event):

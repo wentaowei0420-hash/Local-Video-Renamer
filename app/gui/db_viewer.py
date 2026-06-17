@@ -23,6 +23,7 @@ from app.core.enrichment_status import ENRICHED_STATUS
 from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.i18n import tr
 from app.gui.video_filter_dialog import VideoFilterDialog
+from app.gui.video_filter_events import video_filter_event_bus
 from app.gui.video_library_settings import load_video_library_settings, save_video_library_settings
 from app.gui.video_library_sorting import (
     DEFAULT_VIDEO_SORT_FIELD,
@@ -45,6 +46,7 @@ class DatabaseViewerWindow(AsyncTaskHostMixin, QDialog):
         self.rows = []
         self.sort_settings = load_video_library_settings()
         self._init_async_task_host()
+        video_filter_event_bus.rules_saved.connect(self.on_filter_rules_saved)
         self.init_ui()
         self.load_data()
 
@@ -225,8 +227,14 @@ class DatabaseViewerWindow(AsyncTaskHostMixin, QDialog):
 
     def open_filter_dialog(self):
         dialog = VideoFilterDialog(self)
-        if dialog.exec_():
-            self.load_data()
+        dialog.exec_()
+
+    def on_filter_rules_saved(self):
+        if self.is_async_task_running():
+            return
+        if not self.isVisible():
+            return
+        self.load_data()
 
     def apply_sort_settings_to_controls(self):
         sort_field = self.sort_settings.get('sort_field', DEFAULT_VIDEO_SORT_FIELD)

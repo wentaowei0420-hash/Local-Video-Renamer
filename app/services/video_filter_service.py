@@ -24,3 +24,6 @@ class VideoFilterService:
             for row in (rows or [])
             if not should_hide_video_from_library(row, active_settings)
         ]
+
+    def filter_video_rows(self, rows, settings=None):
+        return self.filter_library_rows(rows, settings=settings)

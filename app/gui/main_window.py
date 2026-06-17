@@ -171,7 +171,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
             self.backend_instance_token = str((health or {}).get('backend_instance_token') or self.backend_instance_token)
             return
         if health is not None:
-            self.stop_backend_on_port()
+            self.stop_backend_on_port(health=health)
             health = self.get_backend_health()
             if self.is_reusable_backend_instance(health):
                 self.backend_instance_token = str((health or {}).get('backend_instance_token') or self.backend_instance_token)
@@ -247,7 +247,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
             return False
         return Path(existing_project_root).resolve() == PROJECT_ROOT.resolve()
 
-    def stop_backend_on_port(self):
+    def stop_backend_on_port(self, health=None):
         if self.backend_process and self.backend_process.poll() is None:
             self.backend_process.terminate()
             try:
@@ -256,6 +256,10 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
                 pass
             self.backend_process = None
             return
+
+        if self._terminate_backend_pid(self._extract_backend_pid(health)):
+            if self._wait_for_backend_release():
+                return
 
         creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         port = str(get_backend_port())
@@ -284,15 +288,37 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
                 target_pids.add(pid)
 
         for pid in sorted(target_pids):
-            subprocess.run(
-                ['taskkill', '/PID', pid, '/F'],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creation_flags,
-            )
+            self._terminate_backend_pid(pid)
 
         if target_pids:
-            time.sleep(0.5)
+            self._wait_for_backend_release()
+
+    @staticmethod
+    def _extract_backend_pid(health):
+        pid = str((health or {}).get('backend_process_id') or '').strip()
+        return pid if pid.isdigit() else ''
+
+    @staticmethod
+    def _terminate_backend_pid(pid):
+        normalized_pid = str(pid or '').strip()
+        if not normalized_pid.isdigit():
+            return False
+        creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        subprocess.run(
+            ['taskkill', '/PID', normalized_pid, '/T', '/F'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags,
+        )
+        return True
+
+    def _wait_for_backend_release(self, timeout_seconds=3.0):
+        deadline = time.time() + max(0.2, float(timeout_seconds or 0))
+        while time.time() < deadline:
+            if self.get_backend_health() is None:
+                return True
+            time.sleep(0.2)
+        return self.get_backend_health() is None
 
     def stop_owned_backend(self):
         if not self.owns_backend_process:
@@ -309,7 +335,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
 
         health = self.get_backend_health()
         if self.is_expected_backend_instance(health):
-            self.stop_backend_on_port()
+            self.stop_backend_on_port(health=health)
         self.owns_backend_process = False
 
     def init_ui(self):

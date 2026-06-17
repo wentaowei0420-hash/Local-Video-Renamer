@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 
 from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary
 from app.gui.i18n import tr
+from app.gui.video_filter_events import video_filter_event_bus
 from app.gui.video_list_detail_viewer import VideoListDetailWindow
 
 
@@ -20,6 +21,7 @@ class CodePrefixDetailViewerWindow(QDialog):
         self.backend_client = backend_client
         self.prefix = str(prefix or '').strip().upper()
         self.detail = {}
+        video_filter_event_bus.rules_saved.connect(self.on_filter_rules_saved)
         self.init_ui()
         self.load_data()
 
@@ -128,3 +130,7 @@ class CodePrefixDetailViewerWindow(QDialog):
             parent=self,
         )
         viewer.exec_()
+
+    def on_filter_rules_saved(self):
+        if self.isVisible():
+            self.load_data()
