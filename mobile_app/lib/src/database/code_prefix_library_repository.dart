@@ -11,11 +11,12 @@ class CodePrefixLibraryRepository {
   final String databasePath;
   Future<Database>? _databaseFuture;
 
-  static const int defaultLimit = 80;
+  static const int defaultLimit = 100;
 
   Future<CodePrefixSearchResult> searchPrefixes({
     String query = '',
     int limit = defaultLimit,
+    int offset = 0,
   }) async {
     final database = await _openDatabase();
     final normalizedQuery = query.trim();
@@ -75,10 +76,12 @@ class CodePrefixLibraryRepository {
       GROUP BY c.prefix
       ORDER BY movie_count DESC, c.prefix COLLATE NOCASE ASC
       LIMIT ?
+      OFFSET ?
       ''',
       <Object?>[
         ...whereArgs,
         limit,
+        offset,
       ],
     );
 
@@ -86,6 +89,7 @@ class CodePrefixLibraryRepository {
       items: itemRows.map(CodePrefixListItem.fromMap).toList(growable: false),
       totalCount: totalCount,
       limit: limit,
+      offset: offset,
     );
   }
 

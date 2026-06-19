@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/database_status.dart';
 import 'actor_library_screen.dart';
 import 'code_prefix_library_screen.dart';
+import 'theme/app_design.dart';
+import 'theme/app_icons.dart';
 import 'video_library_screen.dart';
 
 class AppShell extends StatefulWidget {
@@ -36,47 +37,67 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: [
-          VideoLibraryScreen(
-            databaseStatus: widget.databaseStatus,
-            onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
-          ),
-          ActorLibraryScreen(
-            databaseStatus: widget.databaseStatus,
-            onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
-          ),
-          CodePrefixLibraryScreen(
-            databaseStatus: widget.databaseStatus,
-            onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
-          ),
-        ],
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: AppDesign.appBackground,
+        ),
+        child: IndexedStack(
+          index: _currentIndex,
+          children: [
+            VideoLibraryScreen(
+              databaseStatus: widget.databaseStatus,
+              onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
+            ),
+            ActorLibraryScreen(
+              databaseStatus: widget.databaseStatus,
+              onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
+            ),
+            CodePrefixLibraryScreen(
+              databaseStatus: widget.databaseStatus,
+              onRefreshDatabaseStatus: widget.onRefreshDatabaseStatus,
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(LucideIcons.video, size: 20),
-            selectedIcon: Icon(LucideIcons.videotape, size: 20),
-            label: '视频库',
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppDesign.surface.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: AppDesign.border),
+            boxShadow: AppDesign.softShadow,
           ),
-          NavigationDestination(
-            icon: Icon(LucideIcons.user2, size: 20),
-            selectedIcon: Icon(LucideIcons.users, size: 20),
-            label: '演员库',
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: NavigationBar(
+              height: 72,
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(LucideIcons.video, size: 20),
+                  selectedIcon: Icon(LucideIcons.videotape, size: 20),
+                  label: '视频库',
+                ),
+                NavigationDestination(
+                  icon: Icon(LucideIcons.user2, size: 20),
+                  selectedIcon: Icon(LucideIcons.users, size: 20),
+                  label: '演员库',
+                ),
+                NavigationDestination(
+                  icon: Icon(LucideIcons.grid, size: 20),
+                  selectedIcon: Icon(LucideIcons.layoutGrid, size: 20),
+                  label: '番号库',
+                ),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(LucideIcons.grid, size: 20),
-            selectedIcon: Icon(LucideIcons.layoutGrid, size: 20),
-            label: '番号库',
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -98,6 +119,7 @@ class _AppShellState extends State<AppShell> {
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      backgroundColor: AppDesign.surface,
       builder: (context) {
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -157,7 +179,7 @@ class _StatusRow extends StatelessWidget {
             child: Text(
               label,
               style: theme.textTheme.labelLarge?.copyWith(
-                color: const Color(0xFF8E3B2E),
+                color: AppDesign.indigo,
                 fontWeight: FontWeight.w700,
               ),
             ),

@@ -1,13 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/database_status.dart';
 import '../database/video_library_repository.dart';
 import '../database/video_search_result.dart';
 import 'detail_routes.dart';
+import 'theme/app_icons.dart';
 import 'widgets/animated_reveal.dart';
+import 'widgets/result_pagination_bar.dart';
 import 'widgets/video_summary_card.dart';
 
 class VideoLibraryScreen extends StatefulWidget {
@@ -25,11 +26,14 @@ class VideoLibraryScreen extends StatefulWidget {
 }
 
 class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
+  static const int _pageSize = 100;
+
   late final VideoLibraryRepository _repository;
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
   late Future<VideoSearchResult> _resultFuture;
   String _query = '';
+  int _currentPage = 1;
 
   @override
   void initState() {
@@ -37,7 +41,7 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
     _repository = VideoLibraryRepository(
       databasePath: widget.databaseStatus.databasePath,
     );
-    _resultFuture = _repository.searchVideos();
+    _resultFuture = _loadPage();
   }
 
   @override
@@ -48,12 +52,32 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
     super.dispose();
   }
 
+  Future<VideoSearchResult> _loadPage({
+    String? query,
+    int? page,
+  }) {
+    final nextQuery = query ?? _query;
+    final nextPage = page ?? _currentPage;
+    return _repository.searchVideos(
+      query: nextQuery,
+      limit: _pageSize,
+      offset: (nextPage - 1) * _pageSize,
+    );
+  }
+
   Future<void> _reload() async {
     widget.onRefreshDatabaseStatus();
     setState(() {
-      _resultFuture = _repository.searchVideos(query: _query);
+      _resultFuture = _loadPage();
     });
     await _resultFuture;
+  }
+
+  void _goToPage(int page) {
+    setState(() {
+      _currentPage = page;
+      _resultFuture = _loadPage(page: page);
+    });
   }
 
   void _handleSearchChanged(String value) {
@@ -68,7 +92,8 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
       }
       setState(() {
         _query = normalized;
-        _resultFuture = _repository.searchVideos(query: _query);
+        _currentPage = 1;
+        _resultFuture = _loadPage(query: _query, page: 1);
       });
     });
   }
@@ -81,94 +106,32 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
     }
     setState(() {
       _query = '';
-      _resultFuture = _repository.searchVideos();
+      _currentPage = 1;
+      _resultFuture = _loadPage(query: '', page: 1);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: _reload,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           AnimatedReveal(
-            child: Container(
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(28),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF2A211F), Color(0xFF734738)],
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '本地视频库',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '直接读取 video_database.db 的 processed_videos。先完成编号搜索与只读卡片列表。',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: _searchController,
-                    onChanged: _handleSearchChanged,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: '搜索番号、标题、演员、存储位置',
-                      prefixIcon: const Icon(LucideIcons.search, size: 18),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: _clearSearch,
-                              icon: const Icon(LucideIcons.x, size: 18),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          AnimatedReveal(
-            delay: const Duration(milliseconds: 80),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Wrap(
-                  runSpacing: 10,
-                  spacing: 10,
-                  children: [
-                    _InfoChip(
-                      icon: LucideIcons.database,
-                      label: '数据库已连接',
-                      value: widget.databaseStatus.sizeLabel,
-                    ),
-                    _InfoChip(
-                      icon: LucideIcons.search,
-                      label: '当前搜索',
-                      value: _query.isEmpty ? '全部视频' : _query,
-                    ),
-                    _InfoChip(
-                      icon: LucideIcons.folderOpen,
-                      label: '存放位置',
-                      value: widget.databaseStatus.directoryLabel,
-                    ),
-                  ],
-                ),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _handleSearchChanged,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索番号、标题、演员、存储位置',
+                prefixIcon: const Icon(LucideIcons.search, size: 18),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: _clearSearch,
+                        icon: const Icon(LucideIcons.x, size: 18),
+                      ),
               ),
             ),
           ),
@@ -190,7 +153,7 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
               );
             },
             child: FutureBuilder<VideoSearchResult>(
-              key: ValueKey<String>(_query),
+              key: ValueKey<String>('video-$_query-$_currentPage'),
               future: _resultFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
@@ -204,7 +167,7 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
                     errorText: snapshot.error.toString(),
                     onRetry: () {
                       setState(() {
-                        _resultFuture = _repository.searchVideos(query: _query);
+                        _resultFuture = _loadPage();
                       });
                     },
                   );
@@ -212,24 +175,18 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
 
                 final result = snapshot.data!;
                 return Column(
-                  key: ValueKey<String>('video-result-$_query-${result.totalCount}'),
+                  key: ValueKey<String>('video-result-$_query-${result.currentPage}-${result.totalCount}'),
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: Text(
-                          result.hasMore
-                              ? '共 ${result.totalCount} 条，当前展示前 ${result.items.length} 条'
-                              : '共 ${result.totalCount} 条',
-                          key: ValueKey<String>('video-count-${result.totalCount}-${result.items.length}'),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
+                    ResultPaginationBar(
+                      totalCount: result.totalCount,
+                      currentPage: result.currentPage,
+                      totalPages: result.totalPages,
+                      currentItemCount: result.items.length,
+                      itemLabel: '条',
+                      onPageSelected: _goToPage,
                     ),
+                    const SizedBox(height: 12),
                     if (result.items.isEmpty)
                       const _EmptyVideoState()
                     else
@@ -249,55 +206,21 @@ class _VideoLibraryScreenState extends State<VideoLibraryScreen> {
                         ),
                         const SizedBox(height: 12),
                       ],
+                    if (result.items.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ResultPaginationBar(
+                        totalCount: result.totalCount,
+                        currentPage: result.currentPage,
+                        totalPages: result.totalPages,
+                        currentItemCount: result.items.length,
+                        itemLabel: '条',
+                        onPageSelected: _goToPage,
+                      ),
+                    ],
                   ],
                 );
               },
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF4ECE5),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: const Color(0xFF8E3B2E)),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: const Color(0xFF8E3B2E),
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 2),
-              Text(value),
-            ],
           ),
         ],
       ),

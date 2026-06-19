@@ -1,14 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/actor_library_repository.dart';
 import '../database/actor_list_item.dart';
 import '../database/actor_search_result.dart';
 import '../database/database_status.dart';
 import 'detail_routes.dart';
+import 'theme/app_icons.dart';
 import 'widgets/animated_reveal.dart';
+import 'widgets/result_pagination_bar.dart';
 
 class ActorLibraryScreen extends StatefulWidget {
   const ActorLibraryScreen({
@@ -25,11 +26,14 @@ class ActorLibraryScreen extends StatefulWidget {
 }
 
 class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
+  static const int _pageSize = 100;
+
   late final ActorLibraryRepository _repository;
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
   late Future<ActorSearchResult> _resultFuture;
   String _query = '';
+  int _currentPage = 1;
 
   @override
   void initState() {
@@ -37,7 +41,7 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
     _repository = ActorLibraryRepository(
       databasePath: widget.databaseStatus.databasePath,
     );
-    _resultFuture = _repository.searchActors();
+    _resultFuture = _loadPage();
   }
 
   @override
@@ -48,12 +52,32 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
     super.dispose();
   }
 
+  Future<ActorSearchResult> _loadPage({
+    String? query,
+    int? page,
+  }) {
+    final nextQuery = query ?? _query;
+    final nextPage = page ?? _currentPage;
+    return _repository.searchActors(
+      query: nextQuery,
+      limit: _pageSize,
+      offset: (nextPage - 1) * _pageSize,
+    );
+  }
+
   Future<void> _reload() async {
     widget.onRefreshDatabaseStatus();
     setState(() {
-      _resultFuture = _repository.searchActors(query: _query);
+      _resultFuture = _loadPage();
     });
     await _resultFuture;
+  }
+
+  void _goToPage(int page) {
+    setState(() {
+      _currentPage = page;
+      _resultFuture = _loadPage(page: page);
+    });
   }
 
   void _handleSearchChanged(String value) {
@@ -68,7 +92,8 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
       }
       setState(() {
         _query = normalized;
-        _resultFuture = _repository.searchActors(query: _query);
+        _currentPage = 1;
+        _resultFuture = _loadPage(query: _query, page: 1);
       });
     });
   }
@@ -81,94 +106,32 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
     }
     setState(() {
       _query = '';
-      _resultFuture = _repository.searchActors();
+      _currentPage = 1;
+      _resultFuture = _loadPage(query: '', page: 1);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: _reload,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           AnimatedReveal(
-            child: Container(
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(28),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF243238), Color(0xFF4E7567)],
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '本地演员库',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '直接读取 actors 与 actor_movies。支持演员名、生日、番号和标题搜索。',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: _searchController,
-                    onChanged: _handleSearchChanged,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: '搜索演员名、生日、番号、标题',
-                      prefixIcon: const Icon(LucideIcons.search, size: 18),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: _clearSearch,
-                              icon: const Icon(LucideIcons.x, size: 18),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          AnimatedReveal(
-            delay: const Duration(milliseconds: 80),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Wrap(
-                  runSpacing: 10,
-                  spacing: 10,
-                  children: [
-                    _ActorInfoChip(
-                      icon: LucideIcons.database,
-                      label: '数据库状态',
-                      value: '已连接',
-                    ),
-                    _ActorInfoChip(
-                      icon: LucideIcons.search,
-                      label: '当前搜索',
-                      value: _query.isEmpty ? '全部演员' : _query,
-                    ),
-                    _ActorInfoChip(
-                      icon: LucideIcons.users,
-                      label: '数据来源',
-                      value: 'actors / actor_movies',
-                    ),
-                  ],
-                ),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _handleSearchChanged,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索演员名、生日、番号、标题',
+                prefixIcon: const Icon(LucideIcons.search, size: 18),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: _clearSearch,
+                        icon: const Icon(LucideIcons.x, size: 18),
+                      ),
               ),
             ),
           ),
@@ -190,7 +153,7 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
               );
             },
             child: FutureBuilder<ActorSearchResult>(
-              key: ValueKey<String>(_query),
+              key: ValueKey<String>('actor-$_query-$_currentPage'),
               future: _resultFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
@@ -204,7 +167,7 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
                     errorText: snapshot.error.toString(),
                     onRetry: () {
                       setState(() {
-                        _resultFuture = _repository.searchActors(query: _query);
+                        _resultFuture = _loadPage();
                       });
                     },
                   );
@@ -212,24 +175,18 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
 
                 final result = snapshot.data!;
                 return Column(
-                  key: ValueKey<String>('actor-result-$_query-${result.totalCount}'),
+                  key: ValueKey<String>('actor-result-$_query-${result.currentPage}-${result.totalCount}'),
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: Text(
-                          result.hasMore
-                              ? '共 ${result.totalCount} 位演员，当前展示前 ${result.items.length} 位'
-                              : '共 ${result.totalCount} 位演员',
-                          key: ValueKey<String>('actor-count-${result.totalCount}-${result.items.length}'),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
+                    ResultPaginationBar(
+                      totalCount: result.totalCount,
+                      currentPage: result.currentPage,
+                      totalPages: result.totalPages,
+                      currentItemCount: result.items.length,
+                      itemLabel: '位演员',
+                      onPageSelected: _goToPage,
                     ),
+                    const SizedBox(height: 12),
                     if (result.items.isEmpty)
                       const _EmptyActorState()
                     else
@@ -249,55 +206,21 @@ class _ActorLibraryScreenState extends State<ActorLibraryScreen> {
                         ),
                         const SizedBox(height: 12),
                       ],
+                    if (result.items.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ResultPaginationBar(
+                        totalCount: result.totalCount,
+                        currentPage: result.currentPage,
+                        totalPages: result.totalPages,
+                        currentItemCount: result.items.length,
+                        itemLabel: '位演员',
+                        onPageSelected: _goToPage,
+                      ),
+                    ],
                   ],
                 );
               },
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActorInfoChip extends StatelessWidget {
-  const _ActorInfoChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE8F0EC),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: const Color(0xFF2E6150)),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: const Color(0xFF2E6150),
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 2),
-              Text(value),
-            ],
           ),
         ],
       ),

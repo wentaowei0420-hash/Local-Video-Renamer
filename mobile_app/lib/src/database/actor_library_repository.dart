@@ -11,11 +11,12 @@ class ActorLibraryRepository {
   final String databasePath;
   Future<Database>? _databaseFuture;
 
-  static const int defaultLimit = 80;
+  static const int defaultLimit = 100;
 
   Future<ActorSearchResult> searchActors({
     String query = '',
     int limit = defaultLimit,
+    int offset = 0,
   }) async {
     final database = await _openDatabase();
     final normalizedQuery = query.trim();
@@ -69,10 +70,12 @@ class ActorLibraryRepository {
       GROUP BY a.name, a.birthday, a.age, a.matched
       ORDER BY movie_count DESC, a.name COLLATE NOCASE ASC
       LIMIT ?
+      OFFSET ?
       ''',
       <Object?>[
         ...whereArgs,
         limit,
+        offset,
       ],
     );
 
@@ -80,6 +83,7 @@ class ActorLibraryRepository {
       items: itemRows.map(ActorListItem.fromMap).toList(growable: false),
       totalCount: totalCount,
       limit: limit,
+      offset: offset,
     );
   }
 

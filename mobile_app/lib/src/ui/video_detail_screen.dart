@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/library_detail_repository.dart';
 import '../database/video_detail.dart';
 import 'detail_routes.dart';
+import 'theme/app_icons.dart';
 import 'widgets/animated_reveal.dart';
 import 'widgets/video_cover_thumbnail.dart';
 

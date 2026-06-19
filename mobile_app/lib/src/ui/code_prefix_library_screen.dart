@@ -1,14 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/code_prefix_library_repository.dart';
 import '../database/code_prefix_list_item.dart';
 import '../database/code_prefix_search_result.dart';
 import '../database/database_status.dart';
 import 'detail_routes.dart';
+import 'theme/app_icons.dart';
 import 'widgets/animated_reveal.dart';
+import 'widgets/result_pagination_bar.dart';
 
 class CodePrefixLibraryScreen extends StatefulWidget {
   const CodePrefixLibraryScreen({
@@ -25,11 +26,14 @@ class CodePrefixLibraryScreen extends StatefulWidget {
 }
 
 class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
+  static const int _pageSize = 100;
+
   late final CodePrefixLibraryRepository _repository;
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
   late Future<CodePrefixSearchResult> _resultFuture;
   String _query = '';
+  int _currentPage = 1;
 
   @override
   void initState() {
@@ -37,7 +41,7 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
     _repository = CodePrefixLibraryRepository(
       databasePath: widget.databaseStatus.databasePath,
     );
-    _resultFuture = _repository.searchPrefixes();
+    _resultFuture = _loadPage();
   }
 
   @override
@@ -48,12 +52,32 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
     super.dispose();
   }
 
+  Future<CodePrefixSearchResult> _loadPage({
+    String? query,
+    int? page,
+  }) {
+    final nextQuery = query ?? _query;
+    final nextPage = page ?? _currentPage;
+    return _repository.searchPrefixes(
+      query: nextQuery,
+      limit: _pageSize,
+      offset: (nextPage - 1) * _pageSize,
+    );
+  }
+
   Future<void> _reload() async {
     widget.onRefreshDatabaseStatus();
     setState(() {
-      _resultFuture = _repository.searchPrefixes(query: _query);
+      _resultFuture = _loadPage();
     });
     await _resultFuture;
+  }
+
+  void _goToPage(int page) {
+    setState(() {
+      _currentPage = page;
+      _resultFuture = _loadPage(page: page);
+    });
   }
 
   void _handleSearchChanged(String value) {
@@ -68,7 +92,8 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
       }
       setState(() {
         _query = normalized;
-        _resultFuture = _repository.searchPrefixes(query: _query);
+        _currentPage = 1;
+        _resultFuture = _loadPage(query: _query, page: 1);
       });
     });
   }
@@ -81,94 +106,32 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
     }
     setState(() {
       _query = '';
-      _resultFuture = _repository.searchPrefixes();
+      _currentPage = 1;
+      _resultFuture = _loadPage(query: '', page: 1);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: _reload,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           AnimatedReveal(
-            child: Container(
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(28),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF2B233A), Color(0xFF705C8D)],
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '本地番号库',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '直接读取 code_prefix_movies 与 code_prefix_enrichments。支持前缀、番号、标题、演员和分类搜索。',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: Colors.white.withValues(alpha: 0.9),
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: _searchController,
-                    onChanged: _handleSearchChanged,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: '搜索前缀、番号、标题、演员、分类',
-                      prefixIcon: const Icon(LucideIcons.search, size: 18),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: _clearSearch,
-                              icon: const Icon(LucideIcons.x, size: 18),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          AnimatedReveal(
-            delay: const Duration(milliseconds: 80),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Wrap(
-                  runSpacing: 10,
-                  spacing: 10,
-                  children: [
-                    _PrefixInfoChip(
-                      icon: LucideIcons.database,
-                      label: '数据库状态',
-                      value: '已连接',
-                    ),
-                    _PrefixInfoChip(
-                      icon: LucideIcons.search,
-                      label: '当前搜索',
-                      value: _query.isEmpty ? '全部前缀' : _query,
-                    ),
-                    _PrefixInfoChip(
-                      icon: LucideIcons.layoutGrid,
-                      label: '数据来源',
-                      value: 'code_prefix_*',
-                    ),
-                  ],
-                ),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _handleSearchChanged,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索前缀、番号、标题、演员、分类',
+                prefixIcon: const Icon(LucideIcons.search, size: 18),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: _clearSearch,
+                        icon: const Icon(LucideIcons.x, size: 18),
+                      ),
               ),
             ),
           ),
@@ -190,7 +153,7 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
               );
             },
             child: FutureBuilder<CodePrefixSearchResult>(
-              key: ValueKey<String>(_query),
+              key: ValueKey<String>('prefix-$_query-$_currentPage'),
               future: _resultFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
@@ -204,7 +167,7 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
                     errorText: snapshot.error.toString(),
                     onRetry: () {
                       setState(() {
-                        _resultFuture = _repository.searchPrefixes(query: _query);
+                        _resultFuture = _loadPage();
                       });
                     },
                   );
@@ -212,24 +175,18 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
 
                 final result = snapshot.data!;
                 return Column(
-                  key: ValueKey<String>('prefix-result-$_query-${result.totalCount}'),
+                  key: ValueKey<String>('prefix-result-$_query-${result.currentPage}-${result.totalCount}'),
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: Text(
-                          result.hasMore
-                              ? '共 ${result.totalCount} 个前缀，当前展示前 ${result.items.length} 个'
-                              : '共 ${result.totalCount} 个前缀',
-                          key: ValueKey<String>('prefix-count-${result.totalCount}-${result.items.length}'),
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
+                    ResultPaginationBar(
+                      totalCount: result.totalCount,
+                      currentPage: result.currentPage,
+                      totalPages: result.totalPages,
+                      currentItemCount: result.items.length,
+                      itemLabel: '个前缀',
+                      onPageSelected: _goToPage,
                     ),
+                    const SizedBox(height: 12),
                     if (result.items.isEmpty)
                       const _EmptyPrefixState()
                     else
@@ -249,55 +206,21 @@ class _CodePrefixLibraryScreenState extends State<CodePrefixLibraryScreen> {
                         ),
                         const SizedBox(height: 12),
                       ],
+                    if (result.items.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ResultPaginationBar(
+                        totalCount: result.totalCount,
+                        currentPage: result.currentPage,
+                        totalPages: result.totalPages,
+                        currentItemCount: result.items.length,
+                        itemLabel: '个前缀',
+                        onPageSelected: _goToPage,
+                      ),
+                    ],
                   ],
                 );
               },
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrefixInfoChip extends StatelessWidget {
-  const _PrefixInfoChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEE6F6),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: const Color(0xFF5A3B84)),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: const Color(0xFF5A3B84),
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 2),
-              Text(value),
-            ],
           ),
         ],
       ),

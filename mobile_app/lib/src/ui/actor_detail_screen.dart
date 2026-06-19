@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import '../database/actor_detail.dart';
 import '../database/library_detail_repository.dart';
 import 'detail_routes.dart';
+import 'theme/app_icons.dart';
 import 'video_detail_screen.dart' show DetailEmptyState, DetailErrorState;
 import 'widgets/animated_reveal.dart';
 import 'widgets/video_summary_card.dart';

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lucide_icons/lucide_icons.dart';
 
 import 'src/database/database_status.dart';
 import 'src/database/database_storage.dart';
 import 'src/ui/app_shell.dart';
+import 'src/ui/theme/app_design.dart';
+import 'src/ui/theme/app_icons.dart';
 
 void main() {
   runApp(const LocalVideoApp());
@@ -15,20 +16,23 @@ class LocalVideoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF8E3B2E);
+    const seed = AppDesign.indigo;
     final baseTheme = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
         seedColor: seed,
         brightness: Brightness.light,
       ),
-      scaffoldBackgroundColor: const Color(0xFFF5EFE7),
+      scaffoldBackgroundColor: AppDesign.background,
       cardTheme: CardThemeData(
-        color: Colors.white,
+        color: AppDesign.surface,
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(AppDesign.cardRadius),
+          side: const BorderSide(
+            color: AppDesign.border,
+          ),
         ),
       ),
     );
@@ -40,58 +44,107 @@ class LocalVideoApp extends StatelessWidget {
         textTheme: textTheme,
         primaryTextTheme: GoogleFonts.notoSansScTextTheme(baseTheme.primaryTextTheme),
         appBarTheme: baseTheme.appBarTheme.copyWith(
-          backgroundColor: const Color(0xFFF5EFE7),
+          backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           scrolledUnderElevation: 0,
           titleTextStyle: GoogleFonts.notoSansSc(
             fontSize: 22,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF251D1A),
+            color: AppDesign.ink,
           ),
           iconTheme: const IconThemeData(
-            color: Color(0xFF432B24),
+            color: AppDesign.ink,
           ),
+        ),
+        colorScheme: baseTheme.colorScheme.copyWith(
+          primary: AppDesign.indigo,
+          secondary: AppDesign.teal,
+          tertiary: AppDesign.amber,
+          surface: AppDesign.surface,
+          surfaceContainerHighest: AppDesign.surfaceMuted,
+          outline: AppDesign.borderStrong,
+          onSurface: AppDesign.ink,
+          onSurfaceVariant: AppDesign.inkMuted,
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white,
+          fillColor: AppDesign.surface,
           contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(20),
-            borderSide: BorderSide.none,
+            borderSide: const BorderSide(
+              color: AppDesign.border,
+            ),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(20),
-            borderSide: BorderSide.none,
+            borderSide: const BorderSide(
+              color: AppDesign.border,
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(20),
             borderSide: const BorderSide(
-              color: Color(0xFF8E3B2E),
+              color: AppDesign.indigo,
               width: 1.4,
             ),
           ),
+          hintStyle: GoogleFonts.notoSansSc(
+            color: AppDesign.inkMuted,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
         ),
         navigationBarTheme: baseTheme.navigationBarTheme.copyWith(
-          backgroundColor: const Color(0xFFFBF7F2),
-          indicatorColor: const Color(0xFFEAD8CC),
+          backgroundColor: AppDesign.surface,
+          indicatorColor: AppDesign.indigoSoft,
+          surfaceTintColor: Colors.transparent,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           labelTextStyle: WidgetStateProperty.resolveWith(
             (states) => GoogleFonts.notoSansSc(
               fontSize: 12,
               fontWeight: states.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w600,
               color: states.contains(WidgetState.selected)
-                  ? const Color(0xFF432B24)
-                  : const Color(0xFF7D6A62),
+                  ? AppDesign.ink
+                  : AppDesign.inkMuted,
+            ),
+          ),
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              color: states.contains(WidgetState.selected)
+                  ? AppDesign.indigo
+                  : AppDesign.inkMuted,
             ),
           ),
         ),
         chipTheme: baseTheme.chipTheme.copyWith(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(999),
+            borderRadius: BorderRadius.circular(AppDesign.chipRadius),
           ),
           side: BorderSide.none,
         ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppDesign.indigo,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppDesign.ink,
+            side: const BorderSide(color: AppDesign.borderStrong),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
+        dividerColor: AppDesign.border,
       ),
       home: const DatabaseBootstrapScreen(),
     );

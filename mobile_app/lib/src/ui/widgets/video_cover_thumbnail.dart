@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+
+import '../theme/app_icons.dart';
+import '../theme/app_design.dart';
 
 class VideoCoverThumbnail extends StatelessWidget {
   const VideoCoverThumbnail({
@@ -36,13 +38,10 @@ class VideoCoverThumbnail extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: _gradientForCode(code),
         ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.28),
+        ),
+        boxShadow: AppDesign.softShadow,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(borderRadius),
@@ -91,7 +90,7 @@ class VideoCoverThumbnail extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: Colors.white,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                             ),
                       ),
                     ),
@@ -148,12 +147,12 @@ class VideoCoverThumbnail extends StatelessWidget {
 
   static List<Color> _gradientForCode(String input) {
     const palettes = <List<Color>>[
-      [Color(0xFF5A3228), Color(0xFFB86A4A)],
-      [Color(0xFF26354A), Color(0xFF5D88C3)],
-      [Color(0xFF233B33), Color(0xFF4C8A6F)],
-      [Color(0xFF40293C), Color(0xFF8F5D8B)],
-      [Color(0xFF3A2E24), Color(0xFF8E6B39)],
-      [Color(0xFF2E3448), Color(0xFF6978A6)],
+      [Color(0xFF5C372C), Color(0xFFAF7656)],
+      [Color(0xFF243A52), Color(0xFF628BBE)],
+      [Color(0xFF1F433A), Color(0xFF4E8E76)],
+      [Color(0xFF3A3158), Color(0xFF7571B8)],
+      [Color(0xFF4A3421), Color(0xFFA37C3C)],
+      [Color(0xFF26384A), Color(0xFF63809D)],
     ];
 
     final normalized = input.trim();

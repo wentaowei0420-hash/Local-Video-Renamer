@@ -11,11 +11,12 @@ class VideoLibraryRepository {
   final String databasePath;
   Future<Database>? _databaseFuture;
 
-  static const int defaultLimit = 80;
+  static const int defaultLimit = 100;
 
   Future<VideoSearchResult> searchVideos({
     String query = '',
     int limit = defaultLimit,
+    int offset = 0,
   }) async {
     final database = await _openDatabase();
     final normalizedQuery = query.trim();
@@ -66,10 +67,12 @@ class VideoLibraryRepository {
         COALESCE(NULLIF(javtxt_release_date, ''), NULLIF(release_date, ''), '') DESC,
         code DESC
       LIMIT ?
+      OFFSET ?
       ''',
       <Object?>[
         ...whereArgs,
         limit,
+        offset,
       ],
     );
 
@@ -77,6 +80,7 @@ class VideoLibraryRepository {
       items: itemRows.map(VideoListItem.fromMap).toList(growable: false),
       totalCount: totalCount,
       limit: limit,
+      offset: offset,
     );
   }
 
