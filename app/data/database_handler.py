@@ -36,7 +36,11 @@ from app.core.javtxt_entry_state import (
     is_retryable_search_state,
     normalize_actor_raw_text,
 )
-from app.core.actor_profile_display import normalize_actor_age_for_display
+from app.core.actor_profile_display import (
+    normalize_actor_age_for_display,
+    normalize_actor_birthday_for_display,
+    normalize_actor_birthday_for_storage,
+)
 from app.core.second_source_actor_text import is_unpublished_actor_text, normalize_second_source_actor_text
 from app.core.project_paths import DATABASE_FILE
 from app.data.repositories import (
@@ -1696,12 +1700,13 @@ class VideoDatabase(
                 javtxt_enrichment_status,
                 binghuo_enrichment_status,
             )
+            display_birthday = normalize_actor_birthday_for_display(row[1] or '')
             results.append(
                 {
                     'name': actor_name,
-                    'birthday': row[1] or '',
+                    'birthday': display_birthday,
                     'raw_age': row[2] or '',
-                    'age': normalize_actor_age_for_display(row[2] or '', row[1] or ''),
+                    'age': normalize_actor_age_for_display(row[2] or '', display_birthday),
                     'matched': bool(row[3]),
                     'actor_id': row[4] or '',
                     'binghuo_person_id': str((record or {}).get('binghuo_person_id', '') or '').strip(),
@@ -1721,7 +1726,7 @@ class VideoDatabase(
 
     def add_actor(self, actor_name, birthday='', age=''):
         normalized_name = str(actor_name or '').strip()
-        normalized_birthday = str(birthday or '').strip()
+        normalized_birthday = normalize_actor_birthday_for_storage(birthday)
         normalized_age = str(age or '').strip()
         if not normalized_name:
             raise ValueError('演员名称不能为空')
@@ -2324,7 +2329,7 @@ class VideoDatabase(
             return 0
 
         normalized_person_id = str(person_id or '').strip()
-        normalized_birthday = str(birthday or '').strip()
+        normalized_birthday = normalize_actor_birthday_for_storage(birthday)
         normalized_age = str(age or '').strip()
         normalized_height = str(height or '').strip()
         normalized_bust = str(bust or '').strip()

@@ -49,8 +49,36 @@ class BinghuoActorProfileStorageTest(unittest.TestCase):
         self.assertEqual(record['binghuo_bust'], '85')
         self.assertEqual(record['binghuo_waist'], '60')
         self.assertEqual(record['binghuo_hip'], '88')
-        self.assertEqual(actor_row['birthday'], '2003-09-04')
+        self.assertEqual(actor_row['birthday'], '2003/9/4')
         self.assertEqual(actor_row['raw_age'], '22')
+
+    def test_save_binghuo_profile_normalizes_slash_birthday_to_iso(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO actors (name, birthday, age, matched) VALUES (?, ?, ?, 1)",
+                ('演员Slash', '', ''),
+            )
+            conn.commit()
+
+        self.db.save_binghuo_actor_profile(
+            '演员Slash',
+            ENRICHED_STATUS,
+            person_id='8001',
+            birthday='2002/9/18',
+            age='23',
+        )
+
+        record = self.db.get_actor_enrichment_record('演员Slash')
+        actor_row = self.db.list_actors('演员Slash')[0]
+        with sqlite3.connect(self.db_path) as conn:
+            stored_birthday = conn.execute(
+                "SELECT birthday FROM actors WHERE name = ?",
+                ('演员Slash',),
+            ).fetchone()[0]
+
+        self.assertEqual(record['binghuo_birthday'], '2002-09-18')
+        self.assertEqual(stored_birthday, '2002-09-18')
+        self.assertEqual(actor_row['birthday'], '2002/9/18')
 
     def test_save_partial_binghuo_profile_updates_age_without_filling_missing_birthday(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -95,7 +123,7 @@ class BinghuoActorProfileStorageTest(unittest.TestCase):
 
         actor_row = self.db.list_actors('演员B')[0]
         self.assertEqual(created_count, 1)
-        self.assertEqual(actor_row['birthday'], '2000-01-02')
+        self.assertEqual(actor_row['birthday'], '2000/1/2')
         self.assertEqual(actor_row['raw_age'], '26')
 
     def test_missing_binghuo_result_is_stored_for_future_skip(self):

@@ -8,7 +8,7 @@ from app.core.javtxt_video_state import (
 )
 from app.core.enrichment_sources import build_library_enrichment_status_text
 from app.core.enrichment_status import UNENRICHED_STATUS
-from app.core.actor_profile_display import normalize_actor_age_for_display
+from app.core.actor_profile_display import normalize_actor_age_for_display, normalize_actor_birthday_for_display
 from app.core.video_code import standardize_video_code
 from app.services.detail import build_actor_detail_web_url, build_video_category_distribution, resolve_update_status
 from app.services.identity import split_actor_names
@@ -42,7 +42,7 @@ class ActorDetailLibrary:
             [standardize_video_code((movie or {}).get('code', '')) for movie in web_movies]
         )
         web_summary = summarize_javtxt_movies(web_movies, cache_rows=cache_rows)
-        birthday = actor_row.get('birthday', '')
+        birthday = normalize_actor_birthday_for_display(actor_row.get('birthday', ''))
         ladder_entry = self.database.get_ladder_entry(LADDER_BOARD_ACTOR, LADDER_ENTITY_ACTOR, actor_name)
 
         actor_id = actor_row.get('actor_id', '') or web_record.get('actor_id', '')

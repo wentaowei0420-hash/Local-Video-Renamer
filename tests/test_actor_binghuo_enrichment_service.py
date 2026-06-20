@@ -324,7 +324,7 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
 
         self.assertEqual([row['actor_name'] for row in result['results']], [actor_name])
         actor_row = self.db.list_actors(actor_name)[0]
-        self.assertEqual(actor_row['birthday'], '1996-06-09')
+        self.assertEqual(actor_row['birthday'], '1996/6/9')
         record = self.db.get_actor_enrichment_record(actor_name)
         self.assertEqual(record['binghuo_birthday'], '1996-06-09')
 

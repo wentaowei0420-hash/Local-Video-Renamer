@@ -297,6 +297,9 @@ class BackendService:
         ]
         if not actor_names:
             return rows
+        filter_settings = None
+        if hasattr(self.video_filter_service, 'load_settings'):
+            filter_settings = self.video_filter_service.load_settings()
 
         local_rows = []
         if hasattr(self.db, 'list_local_videos_by_actor_names'):
@@ -318,10 +321,20 @@ class BackendService:
 
         for row in rows:
             actor_name = str((row or {}).get('name', '') or '').strip()
-            visible_local_movies = self.video_filter_service.filter_video_rows(local_movies_by_actor.get(actor_name, []))
+            local_movies = local_movies_by_actor.get(actor_name, [])
+            web_movies = web_movies_by_actor.get(actor_name, [])
+            visible_local_movies = (
+                self.video_filter_service.filter_video_rows(local_movies, settings=filter_settings)
+                if local_movies
+                else []
+            )
             eligible_web_movies = [
-                dict(movie or {})
-                for movie in self.video_filter_service.filter_video_rows(web_movies_by_actor.get(actor_name, []))
+                movie
+                for movie in (
+                    self.video_filter_service.filter_video_rows(web_movies, settings=filter_settings)
+                    if web_movies
+                    else []
+                )
                 if is_javtxt_eligible_movie(movie)
             ]
             row['update_status'] = resolve_update_status(visible_local_movies + eligible_web_movies)
