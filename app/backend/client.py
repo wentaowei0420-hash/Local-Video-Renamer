@@ -100,11 +100,29 @@ class BackendClient:
     def sync_library_statuses(self):
         return self._post('/database/library-status/sync')
 
-    def list_videos(self, search_text=''):
-        query = ''
+    def list_videos(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
+        return self.list_videos_page(
+            search_text=search_text,
+            sort_field=sort_field,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        ).get('videos', [])
+
+    def list_videos_page(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
+        params = {}
         if search_text:
-            query = '?' + urlencode({'q': search_text})
-        return self._get('/database/videos' + query).get('videos', [])
+            params['q'] = search_text
+        if sort_field:
+            params['sort_field'] = sort_field
+        if sort_order:
+            params['sort_order'] = sort_order
+        if limit is not None:
+            params['limit'] = int(limit)
+        if int(offset or 0) > 0:
+            params['offset'] = int(offset or 0)
+        query = ('?' + urlencode(params)) if params else ''
+        return self._get('/database/videos' + query)
 
     def get_video_enrichment_summary(self):
         return self._get('/database/videos/summary').get('summary', {})
@@ -140,11 +158,29 @@ class BackendClient:
     def update_video_category(self, code, category):
         return self._post('/database/videos/category', {'code': code, 'category': category}).get('updated_count', 0)
 
-    def list_actors(self, search_text=''):
-        query = ''
+    def list_actors(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
+        return self.list_actors_page(
+            search_text=search_text,
+            sort_field=sort_field,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        ).get('actors', [])
+
+    def list_actors_page(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
+        params = {}
         if search_text:
-            query = '?' + urlencode({'q': search_text})
-        return self._get('/database/actors' + query).get('actors', [])
+            params['q'] = search_text
+        if sort_field:
+            params['sort_field'] = sort_field
+        if sort_order:
+            params['sort_order'] = sort_order
+        if limit is not None:
+            params['limit'] = int(limit)
+        if int(offset or 0) > 0:
+            params['offset'] = int(offset or 0)
+        query = ('?' + urlencode(params)) if params else ''
+        return self._get('/database/actors' + query)
 
     def get_actor_detail(self, actor_name):
         query = '?' + urlencode({'name': actor_name})
@@ -157,8 +193,12 @@ class BackendClient:
         ).get('created_count', 0)
 
     def list_canglangge_candidates(self):
+        return self.list_canglangge_candidates_snapshot().get('candidates', [])
+
+    def list_canglangge_candidates_snapshot(self, force_refresh=False):
         timeout = max(self.timeout, 120)
-        return self._get('/canglangge/candidates', timeout=timeout).get('candidates', [])
+        query = '?refresh=1' if force_refresh else ''
+        return self._get('/canglangge/candidates' + query, timeout=timeout)
 
     def admit_canglangge_candidates(self, actor_names):
         return self._post('/canglangge/admit', {'actor_names': actor_names}).get('admitted_count', 0)
@@ -210,8 +250,14 @@ class BackendClient:
         return self._post('/database/code-prefixes/delete', {'prefix': prefix}).get('deleted_count', 0)
 
     def get_ladder_board(self, board_key):
+        return self.get_ladder_board_snapshot(board_key).get('board', {})
+
+    def get_ladder_board_snapshot(self, board_key, force_refresh=False):
         query = '?' + urlencode({'board_key': board_key})
-        return self._get('/ladder/board' + query).get('board', {})
+        if force_refresh:
+            query += '&refresh=1'
+        timeout = max(self.timeout, 120)
+        return self._get('/ladder/board' + query, timeout=timeout)
 
     def admit_ladder_entry(self, board_key, entity_name, tier):
         return self._post(
@@ -226,7 +272,12 @@ class BackendClient:
         ).get('board', {})
 
     def get_path_library(self):
-        return self._get('/paths')
+        return self.get_path_library_snapshot()
+
+    def get_path_library_snapshot(self, force_refresh=False):
+        query = '?refresh=1' if force_refresh else ''
+        timeout = max(self.timeout, 120)
+        return self._get('/paths' + query, timeout=timeout)
 
     def list_paths(self):
         return self.get_path_library().get('paths', [])

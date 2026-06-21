@@ -156,15 +156,46 @@ class BackendServiceCanglanggeTest(unittest.TestCase):
     def test_lists_canglangge_candidates(self):
         service = BackendService.__new__(BackendService)
         service.ensure_database_loaded = lambda: None
+        service._canglangge_snapshot = None
         service.canglangge_candidate_service = type(
             'CandidateService',
             (),
             {'list_candidates': lambda self: [{'actor_name': 'Actor A'}]},
         )()
+        service._snapshot_lock = None
+        service._current_snapshot_timestamp = lambda: '2026-06-21 20:00:00'
 
         result = BackendService.list_canglangge_candidates(service)
 
-        self.assertEqual(result, {'candidates': [{'actor_name': 'Actor A'}]})
+        self.assertEqual(
+            result,
+            {'candidates': [{'actor_name': 'Actor A'}], 'refreshed_at': '2026-06-21 20:00:00'},
+        )
+
+    def test_canglangge_snapshot_reuses_cache_until_force_refresh(self):
+        class CandidateService:
+            def __init__(self):
+                self.calls = 0
+
+            def list_candidates(self):
+                self.calls += 1
+                return [{'actor_name': f'Actor {self.calls}'}]
+
+        service = BackendService.__new__(BackendService)
+        service.ensure_database_loaded = lambda: None
+        service._canglangge_snapshot = None
+        service.canglangge_candidate_service = CandidateService()
+        service._snapshot_lock = None
+        timestamps = iter(['2026-06-21 20:00:00', '2026-06-21 20:05:00'])
+        service._current_snapshot_timestamp = lambda: next(timestamps)
+
+        first = BackendService.list_canglangge_candidates(service)
+        second = BackendService.list_canglangge_candidates(service)
+        refreshed = BackendService.list_canglangge_candidates(service, force_refresh=True)
+
+        self.assertEqual(first['candidates'], [{'actor_name': 'Actor 1'}])
+        self.assertEqual(second['candidates'], [{'actor_name': 'Actor 1'}])
+        self.assertEqual(refreshed['candidates'], [{'actor_name': 'Actor 2'}])
 
     def test_admit_candidates_reuses_actor_add_flow(self):
         class FakeAdminService:
@@ -218,6 +249,21 @@ class BackendClientCanglanggeTest(unittest.TestCase):
 
         self.assertEqual(result, [])
         self.assertEqual(calls, [('/canglangge/candidates', 120)])
+
+    def test_list_candidates_snapshot_passes_refresh_query(self):
+        client = BackendClient(base_url='http://127.0.0.1:8766', timeout=30)
+        calls = []
+
+        def fake_get(path, timeout=None):
+            calls.append((path, timeout))
+            return {'candidates': [], 'refreshed_at': '2026-06-21 20:00:00'}
+
+        client._get = fake_get
+
+        result = client.list_canglangge_candidates_snapshot(force_refresh=True)
+
+        self.assertEqual(result['refreshed_at'], '2026-06-21 20:00:00')
+        self.assertEqual(calls, [('/canglangge/candidates?refresh=1', 120)])
 
 
 if __name__ == '__main__':

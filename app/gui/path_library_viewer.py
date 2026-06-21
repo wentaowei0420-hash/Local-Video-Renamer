@@ -42,10 +42,12 @@ class PathLibraryWindow(AsyncTaskHostMixin, QDialog):
         self.btn_use = QPushButton(tr('path.viewer.use_selected'))
         self.btn_use.clicked.connect(self.use_selected_path)
         self.btn_refresh = QPushButton(tr('path.viewer.refresh'))
-        self.btn_refresh.clicked.connect(self.load_data)
+        self.btn_refresh.clicked.connect(lambda: self.load_data(force_refresh=True))
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
 
         top_layout.addWidget(QLabel(tr('path.viewer.saved_paths')))
         top_layout.addStretch()
+        top_layout.addWidget(self.last_refreshed_label)
         top_layout.addWidget(self.btn_add)
         top_layout.addWidget(self.btn_delete)
         top_layout.addWidget(self.btn_use)
@@ -71,9 +73,9 @@ class PathLibraryWindow(AsyncTaskHostMixin, QDialog):
         self.setLayout(layout)
         self.set_async_busy_widgets([self.btn_add, self.btn_delete, self.btn_use, self.btn_refresh, self.table])
 
-    def load_data(self):
+    def load_data(self, force_refresh=False):
         self.start_async_task(
-            lambda: self.backend_client.get_path_library(),
+            lambda: self.backend_client.get_path_library_snapshot(force_refresh=force_refresh),
             self._on_load_data_finished,
             tr('common.read_failed'),
         )
@@ -166,7 +168,7 @@ class PathLibraryWindow(AsyncTaskHostMixin, QDialog):
 
     def _reload_after(self, operation):
         operation()
-        return self.backend_client.get_path_library()
+        return self.backend_client.get_path_library_snapshot()
 
     def use_selected_path(self):
         row = self.current_row()
@@ -190,4 +192,6 @@ class PathLibraryWindow(AsyncTaskHostMixin, QDialog):
         result = dict(result or {})
         self.paths = list(result.get('paths', []) or [])
         self.summary = dict(result.get('summary', {}) or {})
+        refreshed_at = str(result.get('refreshed_at', '') or '').strip() or tr('common.empty')
+        self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
         self.render_rows()

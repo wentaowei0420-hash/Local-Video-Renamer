@@ -1646,83 +1646,126 @@ class VideoDatabase(
 
         return success_count
 
-    def list_actors(self, search_text=''):
+    @classmethod
+    def _actor_order_by_sql(cls, sort_field='name', sort_order='asc'):
+        direction = cls._normalize_list_sort_order(sort_order)
+        order_sql_map = {
+            'name': f'UPPER(a.name) {direction}',
+            'birthday': f'COALESCE(NULLIF(a.birthday, \'\'), \'\') {direction}, UPPER(a.name) {direction}',
+            'age': f'CAST(COALESCE(NULLIF(a.age, \'\'), \'0\') AS INTEGER) {direction}, UPPER(a.name) {direction}',
+        }
+        return order_sql_map.get(str(sort_field or '').strip(), order_sql_map['name'])
+
+    @staticmethod
+    def _actor_search_where_sql(search_text=''):
+        normalized_search = str(search_text or '').strip()
+        ignored_names = [str(name or '').strip() for name in IGNORED_ACTOR_NAMES if str(name or '').strip()]
+        clauses = []
+        params = []
+        if ignored_names:
+            clauses.append('a.name NOT IN ({})'.format(','.join('?' for _ in ignored_names)))
+            params.extend(ignored_names)
+        if normalized_search:
+            like_value = f'%{normalized_search}%'
+            clauses.append(
+                '''
+                (
+                    a.name LIKE ? OR a.birthday LIKE ? OR a.age LIKE ?
+                    OR COALESCE(e.actor_id, '') LIKE ?
+                    OR COALESCE(e.enrichment_status, ?) LIKE ?
+                )
+                '''
+            )
+            params.extend([like_value, like_value, like_value, like_value, UNENRICHED_STATUS, like_value])
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        return where_sql, tuple(params)
+
+    @staticmethod
+    def _build_actor_list_row(row):
+        actor_name = row[0] or ''
+        display_birthday = normalize_actor_birthday_for_display(row[1] or '')
+        avfan_enrichment_status = row[5] or UNENRICHED_STATUS
+        javtxt_enrichment_status = row[6] or UNENRICHED_STATUS
+        binghuo_enrichment_status = row[7] or UNENRICHED_STATUS
+        enrichment_status = build_library_enrichment_status_text(
+            avfan_enrichment_status,
+            javtxt_enrichment_status,
+            binghuo_enrichment_status,
+        )
+        return {
+            'name': actor_name,
+            'birthday': display_birthday,
+            'raw_age': row[2] or '',
+            'age': normalize_actor_age_for_display(row[2] or '', display_birthday),
+            'matched': bool(row[3]),
+            'actor_id': row[4] or '',
+            'avfan_enrichment_status': avfan_enrichment_status,
+            'javtxt_enrichment_status': javtxt_enrichment_status,
+            'binghuo_enrichment_status': binghuo_enrichment_status,
+            'binghuo_person_id': row[8] or '',
+            'binghuo_birthday': row[9] or '',
+            'binghuo_age': row[10] or '',
+            'binghuo_height': row[11] or '',
+            'binghuo_bust': row[12] or '',
+            'binghuo_waist': row[13] or '',
+            'binghuo_hip': row[14] or '',
+            'enrichment_status': enrichment_status or UNENRICHED_STATUS,
+        }
+
+    def list_actors(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
         """读取演员库，必要时按演员/生日/年龄/补全状态筛选。"""
-        search_text = (search_text or '').strip()
+        where_sql, parameters = self._actor_search_where_sql(search_text)
+        order_by_sql = self._actor_order_by_sql(sort_field, sort_order)
+        normalized_limit, normalized_offset = self._normalize_limit_offset(limit, offset)
+        limit_sql = ''
+        query_parameters = list(parameters)
+        if normalized_limit is not None:
+            limit_sql = ' LIMIT ? OFFSET ?'
+            query_parameters.extend([normalized_limit, normalized_offset])
 
         with self._connect() as conn:
             cursor = conn.cursor()
-            if search_text:
-                like_value = f'%{search_text}%'
-                cursor.execute('''
-                    SELECT a.name, a.birthday, a.age, a.matched,
-                           COALESCE(e.actor_id, '') AS actor_id,
-                           COALESCE(e.enrichment_status, ?) AS enrichment_status
-                    FROM actors a
-                    LEFT JOIN actor_enrichments e ON e.actor_name = a.name
-                    WHERE a.name LIKE ? OR a.birthday LIKE ? OR a.age LIKE ?
-                       OR COALESCE(e.actor_id, '') LIKE ?
-                       OR COALESCE(e.enrichment_status, ?) LIKE ?
-                    ORDER BY a.name
-                ''', (
-                    UNENRICHED_STATUS,
-                    like_value,
-                    like_value,
-                    like_value,
-                    like_value,
-                    UNENRICHED_STATUS,
-                    like_value,
-                ))
-            else:
-                cursor.execute('''
-                    SELECT a.name, a.birthday, a.age, a.matched,
-                           COALESCE(e.actor_id, '') AS actor_id,
-                           COALESCE(e.enrichment_status, ?) AS enrichment_status
-                    FROM actors a
-                    LEFT JOIN actor_enrichments e ON e.actor_name = a.name
-                    ORDER BY a.name
-                ''', (UNENRICHED_STATUS,))
-
+            cursor.execute(
+                f'''
+                SELECT a.name, a.birthday, a.age, a.matched,
+                       COALESCE(e.actor_id, '') AS actor_id,
+                       COALESCE(e.avfan_enrichment_status, ?) AS avfan_enrichment_status,
+                       COALESCE(e.javtxt_enrichment_status, ?) AS javtxt_enrichment_status,
+                       COALESCE(e.binghuo_enrichment_status, ?) AS binghuo_enrichment_status,
+                       COALESCE(e.binghuo_person_id, '') AS binghuo_person_id,
+                       COALESCE(e.binghuo_birthday, '') AS binghuo_birthday,
+                       COALESCE(e.binghuo_age, '') AS binghuo_age,
+                       COALESCE(e.binghuo_height, '') AS binghuo_height,
+                       COALESCE(e.binghuo_bust, '') AS binghuo_bust,
+                       COALESCE(e.binghuo_waist, '') AS binghuo_waist,
+                       COALESCE(e.binghuo_hip, '') AS binghuo_hip
+                FROM actors a
+                LEFT JOIN actor_enrichments e ON e.actor_name = a.name
+                {where_sql}
+                ORDER BY {order_by_sql}
+                {limit_sql}
+                ''',
+                (UNENRICHED_STATUS, UNENRICHED_STATUS, UNENRICHED_STATUS, *query_parameters),
+            )
             rows = cursor.fetchall()
 
-        enrichment_records = self.list_actor_enrichment_records()
-        results = []
-        for row in rows:
-            actor_name = row[0] or ''
-            if is_ignored_actor_name(actor_name):
-                continue
-            record = enrichment_records.get(actor_name, {})
-            avfan_enrichment_status = str((record or {}).get('avfan_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
-            javtxt_enrichment_status = str((record or {}).get('javtxt_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
-            binghuo_enrichment_status = str((record or {}).get('binghuo_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
-            enrichment_status = build_library_enrichment_status_text(
-                avfan_enrichment_status,
-                javtxt_enrichment_status,
-                binghuo_enrichment_status,
+        return [self._build_actor_list_row(row) for row in rows if not is_ignored_actor_name(row[0] or '')]
+
+    def count_actors(self, search_text=''):
+        where_sql, parameters = self._actor_search_where_sql(search_text)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f'''
+                SELECT COUNT(*)
+                FROM actors a
+                LEFT JOIN actor_enrichments e ON e.actor_name = a.name
+                {where_sql}
+                ''',
+                tuple(parameters),
             )
-            display_birthday = normalize_actor_birthday_for_display(row[1] or '')
-            results.append(
-                {
-                    'name': actor_name,
-                    'birthday': display_birthday,
-                    'raw_age': row[2] or '',
-                    'age': normalize_actor_age_for_display(row[2] or '', display_birthday),
-                    'matched': bool(row[3]),
-                    'actor_id': row[4] or '',
-                    'binghuo_person_id': str((record or {}).get('binghuo_person_id', '') or '').strip(),
-                    'binghuo_birthday': str((record or {}).get('binghuo_birthday', '') or '').strip(),
-                    'binghuo_age': str((record or {}).get('binghuo_age', '') or '').strip(),
-                    'binghuo_height': str((record or {}).get('binghuo_height', '') or '').strip(),
-                    'binghuo_bust': str((record or {}).get('binghuo_bust', '') or '').strip(),
-                    'binghuo_waist': str((record or {}).get('binghuo_waist', '') or '').strip(),
-                    'binghuo_hip': str((record or {}).get('binghuo_hip', '') or '').strip(),
-                    'binghuo_enrichment_status': binghuo_enrichment_status,
-                    'avfan_enrichment_status': avfan_enrichment_status,
-                    'javtxt_enrichment_status': javtxt_enrichment_status,
-                    'enrichment_status': enrichment_status or UNENRICHED_STATUS,
-                }
-            )
-        return results
+            row = cursor.fetchone()
+        return int((row or [0])[0] or 0)
 
     def add_actor(self, actor_name, birthday='', age=''):
         normalized_name = str(actor_name or '').strip()
@@ -3000,8 +3043,69 @@ class VideoDatabase(
             'enrichment_status': build_video_enrichment_status_text(row[16], row[17]),
         }
 
-    def _fetch_processed_video_rows(self, where_sql='', parameters=None):
+    @staticmethod
+    def _normalize_list_sort_order(sort_order):
+        return 'DESC' if str(sort_order or '').strip().lower() == 'desc' else 'ASC'
+
+    @classmethod
+    def _video_order_by_sql(cls, sort_field='code', sort_order='asc'):
+        direction = cls._normalize_list_sort_order(sort_order)
+        code_prefix_sql = "UPPER(CASE WHEN instr(code, '-') > 0 THEN substr(code, 1, instr(code, '-') - 1) ELSE code END)"
+        code_number_sql = "CAST(CASE WHEN instr(code, '-') > 0 THEN substr(code, instr(code, '-') + 1) ELSE '0' END AS INTEGER)"
+        duration_seconds_sql = (
+            "CASE WHEN duration GLOB '*:*:*' THEN "
+            "(CAST(substr(duration, 1, instr(duration, ':') - 1) AS INTEGER) * 3600) + "
+            "(CAST(substr(substr(duration, instr(duration, ':') + 1), 1, instr(substr(duration, instr(duration, ':') + 1), ':') - 1) AS INTEGER) * 60) + "
+            "(CAST(substr(substr(duration, instr(duration, ':') + 1), instr(substr(duration, instr(duration, ':') + 1), ':') + 1) AS INTEGER)) "
+            "ELSE 0 END"
+        )
+        order_sql_map = {
+            'code': f'{code_prefix_sql} {direction}, {code_number_sql} {direction}, UPPER(code) {direction}',
+            'video_category': f'UPPER(COALESCE(video_category, \'\')) {direction}, {code_prefix_sql} {direction}, {code_number_sql} {direction}',
+            'duration': f'{duration_seconds_sql} {direction}, {code_prefix_sql} {direction}, {code_number_sql} {direction}',
+            'size': f'CAST(COALESCE(NULLIF(size, \'\'), \'0\') AS REAL) {direction}, {code_prefix_sql} {direction}, {code_number_sql} {direction}',
+            'release_date': f'COALESCE(NULLIF(release_date, \'\'), \'\') {direction}, {code_prefix_sql} {direction}, {code_number_sql} {direction}',
+        }
+        return order_sql_map.get(str(sort_field or '').strip(), order_sql_map['code'])
+
+    @classmethod
+    def _video_search_where_sql(cls, search_text=''):
+        normalized_search = str(search_text or '').strip()
+        if not normalized_search:
+            return '', ()
+        like_value = f'%{normalized_search}%'
+        return (
+            '''
+            WHERE code LIKE ? OR title LIKE ? OR author LIKE ? OR storage_location LIKE ?
+               OR avfan_movie_id LIKE ? OR javtxt_movie_id LIKE ? OR javtxt_title LIKE ? OR javtxt_actors LIKE ?
+               OR video_category LIKE ?
+               OR release_date LIKE ? OR maker LIKE ? OR publisher LIKE ?
+               OR avfan_enrichment_status LIKE ? OR javtxt_enrichment_status LIKE ?
+            ''',
+            (
+                like_value, like_value, like_value, like_value,
+                like_value, like_value, like_value, like_value,
+                like_value, like_value, like_value, like_value,
+                like_value, like_value,
+            ),
+        )
+
+    @staticmethod
+    def _normalize_limit_offset(limit=None, offset=0):
+        normalized_limit = None if limit is None else max(int(limit or 0), 0)
+        if normalized_limit == 0:
+            normalized_limit = None
+        normalized_offset = max(int(offset or 0), 0)
+        return normalized_limit, normalized_offset
+
+    def _fetch_processed_video_rows(self, where_sql='', parameters=None, order_by_sql='UPPER(code)', limit=None, offset=0):
         parameters = tuple(parameters or ())
+        normalized_limit, normalized_offset = self._normalize_limit_offset(limit, offset)
+        limit_sql = ''
+        query_parameters = list(parameters)
+        if normalized_limit is not None:
+            limit_sql = ' LIMIT ? OFFSET ?'
+            query_parameters.extend([normalized_limit, normalized_offset])
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -3013,35 +3117,38 @@ class VideoDatabase(
                        avfan_enrichment_status, javtxt_enrichment_status
                 FROM processed_videos
                 {where_sql}
-                ORDER BY code
+                ORDER BY {order_by_sql}
+                {limit_sql}
                 ''',
-                parameters,
+                tuple(query_parameters),
             )
             rows = cursor.fetchall()
         return [self._build_processed_video_row(row) for row in rows]
 
-    def list_videos(self, search_text=''):
-        search_text = (search_text or '').strip()
-        if not search_text:
-            return self._fetch_processed_video_rows()
-
-        like_value = f'%{search_text}%'
+    def list_videos(self, search_text='', sort_field='code', sort_order='asc', limit=None, offset=0):
+        where_sql, parameters = self._video_search_where_sql(search_text)
         return self._fetch_processed_video_rows(
-            '''
-            WHERE code LIKE ? OR title LIKE ? OR author LIKE ? OR storage_location LIKE ?
-               OR avfan_movie_id LIKE ? OR javtxt_movie_id LIKE ? OR javtxt_title LIKE ? OR javtxt_actors LIKE ?
-               OR video_category LIKE ?
-               OR release_date LIKE ? OR maker LIKE ? OR publisher LIKE ?
-               OR avfan_enrichment_status LIKE ? OR javtxt_enrichment_status LIKE ?
-            ''',
-            (
-                like_value, like_value, like_value, like_value,
-                like_value, like_value, like_value, like_value,
-                like_value, like_value, like_value,
-                like_value,
-                like_value, like_value,
-            ),
+            where_sql,
+            parameters,
+            order_by_sql=self._video_order_by_sql(sort_field, sort_order),
+            limit=limit,
+            offset=offset,
         )
+
+    def count_videos(self, search_text=''):
+        where_sql, parameters = self._video_search_where_sql(search_text)
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f'''
+                SELECT COUNT(*)
+                FROM processed_videos
+                {where_sql}
+                ''',
+                tuple(parameters),
+            )
+            row = cursor.fetchone()
+        return int((row or [0])[0] or 0)
 
     def list_local_videos_by_actor_name(self, actor_name):
         rows = self.list_local_videos_by_actor_names([actor_name])

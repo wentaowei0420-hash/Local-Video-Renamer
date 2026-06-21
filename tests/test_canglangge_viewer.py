@@ -37,6 +37,14 @@ class CanglanggeBackendStub:
         ]
         self.admitted = []
         self.deleted = []
+        self.snapshot_refresh_flags = []
+
+    def list_canglangge_candidates_snapshot(self, force_refresh=False):
+        self.snapshot_refresh_flags.append(bool(force_refresh))
+        return {
+            'candidates': [dict(row) for row in self.rows],
+            'refreshed_at': '2026-06-21 21:20:00',
+        }
 
     def list_canglangge_candidates(self):
         return [dict(row) for row in self.rows]
@@ -65,6 +73,20 @@ class CanglanggeViewerTest(unittest.TestCase):
                 self.assertEqual(window.table.item(0, 0).text(), 'ActorA')
                 self.assertEqual(window.table.item(0, 1).text(), 'IPX')
                 self.assertEqual(window.table.columnCount(), 5)
+                self.assertEqual(backend.snapshot_refresh_flags, [False])
+                self.assertIn('2026-06-21 21:20:00', window.last_refreshed_label.text())
+            finally:
+                window.hide()
+                window.deleteLater()
+
+    def test_manual_refresh_uses_force_refresh_snapshot(self):
+        backend = CanglanggeBackendStub()
+
+        with patch.object(AsyncTaskHostMixin, 'start_async_task', _run_sync_async_task):
+            window = CanglanggeViewerWindow(backend)
+            try:
+                window.load_data(force_refresh=True)
+                self.assertEqual(backend.snapshot_refresh_flags, [False, True])
             finally:
                 window.hide()
                 window.deleteLater()

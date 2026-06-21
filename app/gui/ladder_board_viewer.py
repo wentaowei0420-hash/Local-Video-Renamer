@@ -50,10 +50,12 @@ class LadderBoardWindow(AsyncTaskHostMixin, QDialog):
         self.btn_code_prefix_board.setCheckable(True)
         self.btn_code_prefix_board.clicked.connect(lambda: self.switch_board(LADDER_BOARD_CODE_PREFIX))
         self.btn_refresh = QPushButton(tr('common.refresh'))
-        self.btn_refresh.clicked.connect(self.load_board)
+        self.btn_refresh.clicked.connect(lambda: self.load_board(force_refresh=True))
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
         board_toggle_layout.addWidget(self.btn_actor_board)
         board_toggle_layout.addWidget(self.btn_code_prefix_board)
         board_toggle_layout.addStretch()
+        board_toggle_layout.addWidget(self.last_refreshed_label)
         board_toggle_layout.addWidget(self.btn_refresh)
 
         view_toggle_layout = QHBoxLayout()
@@ -107,10 +109,10 @@ class LadderBoardWindow(AsyncTaskHostMixin, QDialog):
         self._refresh_toggle_states()
         self._apply_view()
 
-    def load_board(self):
+    def load_board(self, force_refresh=False):
         board_key = self.current_board_key
         self.start_async_task(
-            lambda: self.backend_client.get_ladder_board(board_key),
+            lambda: self.backend_client.get_ladder_board_snapshot(board_key, force_refresh=force_refresh),
             self._on_board_loaded,
             tr('common.read_failed'),
         )
@@ -118,7 +120,7 @@ class LadderBoardWindow(AsyncTaskHostMixin, QDialog):
     def admit_entry(self, entity_name, tier):
         board_key = self.current_board_key
         self.start_async_task(
-            lambda: self.backend_client.admit_ladder_entry(board_key, entity_name, tier),
+            lambda: self._reload_board_after(lambda: self.backend_client.admit_ladder_entry(board_key, entity_name, tier)),
             self._on_board_loaded,
             tr('common.save_failed'),
         )
@@ -126,10 +128,16 @@ class LadderBoardWindow(AsyncTaskHostMixin, QDialog):
     def save_medal(self, entity_name, medal):
         board_key = self.current_board_key
         self.start_async_task(
-            lambda: self.backend_client.update_ladder_entry_medal(board_key, entity_name, medal),
+            lambda: self._reload_board_after(
+                lambda: self.backend_client.update_ladder_entry_medal(board_key, entity_name, medal)
+            ),
             self._on_board_loaded,
             tr('common.save_failed'),
         )
+
+    def _reload_board_after(self, operation):
+        operation()
+        return self.backend_client.get_ladder_board_snapshot(self.current_board_key)
 
     def show_detail(self, entity_name):
         if not entity_name:
@@ -142,7 +150,10 @@ class LadderBoardWindow(AsyncTaskHostMixin, QDialog):
         viewer.exec_()
 
     def _on_board_loaded(self, payload):
-        board = dict((payload or {}).get('board', payload or {}) or {})
+        payload = dict(payload or {})
+        refreshed_at = str(payload.get('refreshed_at', '') or '').strip() or tr('common.empty')
+        self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
+        board = dict(payload.get('board', payload) or {})
         self.current_board_data = board
         self.candidate_panel.set_rows(board.get('candidates', []) or [])
         self.selected_panel.set_rows(board.get('selected', []) or [])

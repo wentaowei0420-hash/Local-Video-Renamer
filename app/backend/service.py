@@ -1,5 +1,8 @@
 import os
+from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
 from app.core.backend_protocol import BACKEND_API_REVISION
 from app.core.combo_enrichment import get_combo_label, normalize_combo_key
@@ -67,6 +70,10 @@ class BackendService:
         self.enrichment_progress = EnrichmentProgressService()
         self.combo_progress = ComboProgressService()
         self.enrichment_task_state = EnrichmentTaskState()
+        self._snapshot_lock = Lock()
+        self._ladder_board_snapshots = {}
+        self._path_library_snapshot = None
+        self._canglangge_snapshot = None
         self.database_loaded = False
 
     def load_database(self):
@@ -107,26 +114,60 @@ class BackendService:
         self.ensure_database_loaded()
         return {'success_count': self.local_video_library.import_videos(plans_data)}
 
-    def list_videos(self, search_text=''):
+    def list_videos(self, search_text='', sort_field='code', sort_order='asc', limit=None, offset=0):
         self.ensure_database_loaded()
         normalized_search = str(search_text or '').strip()
-        if not normalized_search:
-            return {'videos': self.video_filter_service.filter_video_rows(self.db.list_videos())}
+        normalized_limit = self._normalize_list_limit(limit)
+        normalized_offset = self._normalize_list_offset(offset)
+        normalized_sort_field = self._normalize_video_sort_field(sort_field)
+        normalized_sort_order = self._normalize_sort_order(sort_order)
 
-        medal_maps = self.video_ladder_tag_service.load_medal_maps()
-        rows_by_code = {
-            str((row or {}).get('code', '') or '').strip(): dict(row or {})
-            for row in self.db.list_videos(normalized_search)
-            if str((row or {}).get('code', '') or '').strip()
+        medal_maps = None
+        expanded_rows = []
+        if normalized_search:
+            medal_maps = self.video_ladder_tag_service.load_medal_maps()
+            expanded_rows = self._expand_video_search_candidates_by_ladder_tags(normalized_search, medal_maps=medal_maps)
+
+        if expanded_rows:
+            rows_by_code = {
+                str((row or {}).get('code', '') or '').strip(): dict(row or {})
+                for row in self._list_videos_query(
+                    normalized_search,
+                    sort_field=normalized_sort_field,
+                    sort_order=normalized_sort_order,
+                )
+                if str((row or {}).get('code', '') or '').strip()
+            }
+            for row in expanded_rows:
+                code = str((row or {}).get('code', '') or '').strip()
+                if code:
+                    rows_by_code[code] = dict(row or {})
+
+            visible_rows = self.video_filter_service.filter_video_rows(list(rows_by_code.values()))
+            enriched_rows = self.video_ladder_tag_service.enrich_video_rows(visible_rows, medal_maps=medal_maps)
+            filtered_rows = self.video_ladder_tag_service.filter_video_rows(enriched_rows, normalized_search)
+            sorted_rows = self._sort_video_rows_for_listing(filtered_rows, normalized_sort_field, normalized_sort_order)
+            paged_rows = self._slice_rows(sorted_rows, normalized_limit, normalized_offset)
+            return {
+                'videos': paged_rows,
+                'total_count': len(sorted_rows),
+                'offset': normalized_offset,
+                'limit': normalized_limit,
+            }
+
+        rows = self._list_videos_query(
+            normalized_search,
+            sort_field=normalized_sort_field,
+            sort_order=normalized_sort_order,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
+        return {
+            'videos': self.video_filter_service.filter_video_rows(rows),
+            'total_count': self._count_videos_for_listing(normalized_search, fallback_rows=rows),
+            'offset': normalized_offset,
+            'limit': normalized_limit,
         }
-        for row in self._expand_video_search_candidates_by_ladder_tags(normalized_search, medal_maps=medal_maps):
-            code = str((row or {}).get('code', '') or '').strip()
-            if code:
-                rows_by_code[code] = dict(row or {})
-
-        visible_rows = self.video_filter_service.filter_video_rows(list(rows_by_code.values()))
-        enriched_rows = self.video_ladder_tag_service.enrich_video_rows(visible_rows, medal_maps=medal_maps)
-        return {'videos': self.video_ladder_tag_service.filter_video_rows(enriched_rows, normalized_search)}
 
     def get_video_enrichment_summary(self):
         return {'summary': self.db.get_video_enrichment_summary()}
@@ -182,12 +223,29 @@ class BackendService:
         self.ensure_database_loaded()
         return {'updated_count': self.db.update_video_category(code, category)}
 
-    def list_actors(self, search_text=''):
+    def list_actors(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
         self.ensure_database_loaded()
-        rows = list(self.db.list_actors(search_text))
+        normalized_limit = self._normalize_list_limit(limit)
+        normalized_offset = self._normalize_list_offset(offset)
+        normalized_sort_field = self._normalize_actor_sort_field(sort_field)
+        normalized_sort_order = self._normalize_sort_order(sort_order)
+        rows = list(
+            self._list_actors_query(
+                search_text,
+                sort_field=normalized_sort_field,
+                sort_order=normalized_sort_order,
+                limit=normalized_limit,
+                offset=normalized_offset,
+            )
+        )
         self._attach_actor_ladder_tiers(rows)
         self._attach_actor_update_status(rows)
-        return {'actors': rows}
+        return {
+            'actors': rows,
+            'total_count': self._count_actors_for_listing(search_text, fallback_rows=rows),
+            'offset': normalized_offset,
+            'limit': normalized_limit,
+        }
 
     def get_actor_detail(self, actor_name):
         self.ensure_database_loaded()
@@ -197,23 +255,31 @@ class BackendService:
         self.ensure_database_loaded()
         return {'created_count': self.library_admin_service.add_actor(actor_name, birthday=birthday, age=age)}
 
-    def list_canglangge_candidates(self):
+    def list_canglangge_candidates(self, force_refresh=False):
         self.ensure_database_loaded()
-        return {'candidates': self.canglangge_candidate_service.list_candidates()}
+        return self._get_canglangge_snapshot(force_refresh=force_refresh)
 
     def admit_canglangge_candidates(self, actor_names):
         self.ensure_database_loaded()
         admitted_count = 0
         for actor_name in actor_names or []:
             admitted_count += int(self.library_admin_service.add_actor(actor_name, birthday='', age='') or 0)
-        return {'admitted_count': admitted_count}
+        self._remove_from_canglangge_snapshot(actor_names)
+        return {
+            'admitted_count': admitted_count,
+            'refreshed_at': self._snapshot_refreshed_at(getattr(self, '_canglangge_snapshot', None)),
+        }
 
     def delete_canglangge_candidates(self, actor_names):
         self.ensure_database_loaded()
         deleted_count = 0
         for actor_name in actor_names or []:
             deleted_count += int(self.db.hide_actor(actor_name) or 0)
-        return {'deleted_count': deleted_count}
+        self._remove_from_canglangge_snapshot(actor_names)
+        return {
+            'deleted_count': deleted_count,
+            'refreshed_at': self._snapshot_refreshed_at(getattr(self, '_canglangge_snapshot', None)),
+        }
 
     def reset_actor_enrichments(self, actor_names, source_key=None):
         self.ensure_database_loaded()
@@ -251,17 +317,19 @@ class BackendService:
     def delete_code_prefix(self, prefix):
         return {'deleted_count': self.library_admin_service.delete_code_prefix(prefix)}
 
-    def get_ladder_board(self, board_key):
+    def get_ladder_board(self, board_key, force_refresh=False):
         self.ensure_database_loaded()
-        return {'board': self.ladder_board_service.get_board(board_key)}
+        return self._get_ladder_board_snapshot(board_key, force_refresh=force_refresh)
 
     def admit_ladder_entry(self, board_key, entity_name, tier):
         self.ensure_database_loaded()
-        return {'board': self.ladder_board_service.admit_entry(board_key, entity_name, tier)}
+        board = self.ladder_board_service.admit_entry(board_key, entity_name, tier)
+        return self._store_ladder_board_snapshot(board_key, board)
 
     def update_ladder_entry_medal(self, board_key, entity_name, medal):
         self.ensure_database_loaded()
-        return {'board': self.ladder_board_service.update_medal(board_key, entity_name, medal)}
+        board = self.ladder_board_service.update_medal(board_key, entity_name, medal)
+        return self._store_ladder_board_snapshot(board_key, board)
 
     def _expand_video_search_candidates_by_ladder_tags(self, search_text, medal_maps=None):
         normalized_search = str(search_text or '').strip().lower()
@@ -292,6 +360,120 @@ class BackendService:
                 if code:
                     rows_by_code[code] = dict(row or {})
         return list(rows_by_code.values())
+
+    @staticmethod
+    def _normalize_sort_order(sort_order):
+        return 'desc' if str(sort_order or '').strip().lower() == 'desc' else 'asc'
+
+    @staticmethod
+    def _normalize_video_sort_field(sort_field):
+        normalized = str(sort_field or '').strip()
+        return normalized if normalized in ('code', 'video_category', 'duration', 'size', 'release_date') else 'code'
+
+    @staticmethod
+    def _normalize_actor_sort_field(sort_field):
+        normalized = str(sort_field or '').strip()
+        return normalized if normalized in ('name', 'birthday', 'age') else 'name'
+
+    @staticmethod
+    def _normalize_list_limit(limit):
+        if limit is None:
+            return None
+        normalized_limit = int(limit or 0)
+        return normalized_limit if normalized_limit > 0 else None
+
+    @staticmethod
+    def _normalize_list_offset(offset):
+        return max(int(offset or 0), 0)
+
+    @staticmethod
+    def _slice_rows(rows, limit=None, offset=0):
+        normalized_rows = list(rows or [])
+        normalized_offset = max(int(offset or 0), 0)
+        if limit is None:
+            return normalized_rows[normalized_offset:]
+        normalized_limit = max(int(limit or 0), 0)
+        return normalized_rows[normalized_offset: normalized_offset + normalized_limit]
+
+    def _list_videos_query(self, search_text='', sort_field='code', sort_order='asc', limit=None, offset=0):
+        try:
+            return self.db.list_videos(
+                search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+            )
+        except TypeError:
+            return self.db.list_videos(search_text)
+
+    def _list_actors_query(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
+        try:
+            return self.db.list_actors(
+                search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+            )
+        except TypeError:
+            return self.db.list_actors(search_text)
+
+    def _sort_video_rows_for_listing(self, rows, sort_field, sort_order):
+        reverse = self._normalize_sort_order(sort_order) == 'desc'
+
+        def _video_sort_key(row):
+            current_row = dict(row or {})
+            if sort_field == 'release_date':
+                return (str(current_row.get('release_date', '') or ''), str(current_row.get('code', '') or ''))
+            if sort_field == 'video_category':
+                return (str(current_row.get('video_category', '') or ''), str(current_row.get('code', '') or ''))
+            if sort_field == 'size':
+                return (self._safe_float(current_row.get('size', '')), str(current_row.get('code', '') or ''))
+            if sort_field == 'duration':
+                return (self._duration_to_seconds(current_row.get('duration', '')), str(current_row.get('code', '') or ''))
+            return self._natural_code_key(current_row.get('code', ''))
+
+        return sorted(list(rows or []), key=_video_sort_key, reverse=reverse)
+
+    def _count_videos_for_listing(self, search_text='', fallback_rows=None):
+        if hasattr(self.db, 'count_videos'):
+            return int(self.db.count_videos(search_text) or 0)
+        return len(list(fallback_rows or []))
+
+    def _count_actors_for_listing(self, search_text='', fallback_rows=None):
+        if hasattr(self.db, 'count_actors'):
+            return int(self.db.count_actors(search_text) or 0)
+        return len(list(fallback_rows or []))
+
+    @staticmethod
+    def _safe_float(value):
+        try:
+            return float(str(value or '').strip() or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _duration_to_seconds(value):
+        parts = [segment for segment in str(value or '').strip().split(':') if segment != '']
+        if len(parts) != 3:
+            return 0
+        try:
+            hours, minutes, seconds = [int(segment) for segment in parts]
+        except ValueError:
+            return 0
+        return hours * 3600 + minutes * 60 + seconds
+
+    @staticmethod
+    def _natural_code_key(value):
+        normalized_value = str(value or '').strip().upper()
+        if '-' in normalized_value:
+            prefix, suffix = normalized_value.split('-', 1)
+            try:
+                return prefix, int(suffix), normalized_value
+            except ValueError:
+                return prefix, 0, normalized_value
+        return normalized_value, 0, normalized_value
 
     def _attach_actor_update_status(self, rows):
         actor_names = [
@@ -357,30 +539,157 @@ class BackendService:
             row['ladder_tier'] = tier_map.get(actor_name, str((row or {}).get('ladder_tier', '') or '').strip().upper())
         return rows
 
-    def list_paths(self):
-        paths = []
-        for record in self.db.list_paths():
-            path_record = self.path_library.with_exists_status(record)
-            if path_record.get('exists'):
-                self.db.update_path_storage_info(path_record['id'], path_record)
-            paths.append(path_record)
-
-        return {
-            'paths': paths,
-            'summary': summarize_paths(paths),
-        }
+    def list_paths(self, force_refresh=False):
+        return self._get_path_library_snapshot(force_refresh=force_refresh)
 
     def add_path(self, folder_path):
         path_record = self.path_library.build_path_record(folder_path)
         saved_record = self.db.add_path(path_record['path'])
         enriched_record = self.path_library.with_exists_status(saved_record)
         self.db.update_path_storage_info(enriched_record['id'], enriched_record)
-        return {'path': enriched_record}
+        self._append_to_path_snapshot(enriched_record)
+        return {'path': enriched_record, 'refreshed_at': self._snapshot_refreshed_at(self._path_library_snapshot)}
 
     def delete_path(self, path_id):
         if path_id is None:
             raise ValueError('缺少 path_id')
-        return {'deleted_count': self.db.delete_path(path_id)}
+        deleted_count = self.db.delete_path(path_id)
+        self._remove_from_path_snapshot(path_id)
+        return {'deleted_count': deleted_count, 'refreshed_at': self._snapshot_refreshed_at(self._path_library_snapshot)}
+
+    def _get_ladder_board_snapshot(self, board_key, force_refresh=False):
+        normalized_board_key = str(board_key or '').strip()
+        with self._snapshot_guard():
+            snapshots = getattr(self, '_ladder_board_snapshots', None)
+            if not isinstance(snapshots, dict):
+                snapshots = {}
+                self._ladder_board_snapshots = snapshots
+            snapshot = snapshots.get(normalized_board_key)
+            if snapshot is None or force_refresh:
+                board = self.ladder_board_service.get_board(normalized_board_key)
+                snapshot = self._build_snapshot_payload(board=self._clone_ladder_board(board))
+                snapshots[normalized_board_key] = snapshot
+            return {
+                'board': self._clone_ladder_board((snapshot or {}).get('board', {}) or {}),
+                'refreshed_at': self._snapshot_refreshed_at(snapshot),
+            }
+
+    def _store_ladder_board_snapshot(self, board_key, board):
+        normalized_board_key = str(board_key or '').strip()
+        with self._snapshot_guard():
+            snapshots = getattr(self, '_ladder_board_snapshots', None)
+            if not isinstance(snapshots, dict):
+                snapshots = {}
+                self._ladder_board_snapshots = snapshots
+            snapshot = self._build_snapshot_payload(board=self._clone_ladder_board(board))
+            snapshots[normalized_board_key] = snapshot
+            return {
+                'board': self._clone_ladder_board((snapshot or {}).get('board', {}) or {}),
+                'refreshed_at': self._snapshot_refreshed_at(snapshot),
+            }
+
+    def _get_path_library_snapshot(self, force_refresh=False):
+        with self._snapshot_guard():
+            snapshot = getattr(self, '_path_library_snapshot', None)
+            if snapshot is None or force_refresh:
+                paths = [self.path_library.with_exists_status(row) for row in self.db.list_paths()]
+                snapshot = self._build_snapshot_payload(
+                    paths=[dict(path or {}) for path in paths],
+                    summary=summarize_paths(paths),
+                )
+                self._path_library_snapshot = snapshot
+            return {
+                'paths': [dict(path or {}) for path in (snapshot or {}).get('paths', []) or []],
+                'summary': dict((snapshot or {}).get('summary', {}) or {}),
+                'refreshed_at': self._snapshot_refreshed_at(snapshot),
+            }
+
+    def _append_to_path_snapshot(self, path_record):
+        with self._snapshot_guard():
+            snapshot = getattr(self, '_path_library_snapshot', None)
+            if snapshot is None:
+                return
+            paths = [dict(path or {}) for path in (snapshot or {}).get('paths', []) or []]
+            target_id = (path_record or {}).get('id')
+            paths = [path for path in paths if path.get('id') != target_id]
+            paths.append(dict(path_record or {}))
+            paths.sort(
+                key=lambda row: (
+                    str((row or {}).get('created_at', '') or ''),
+                    int((row or {}).get('id', 0) or 0),
+                ),
+                reverse=True,
+            )
+            self._path_library_snapshot = self._build_snapshot_payload(
+                paths=paths,
+                summary=summarize_paths(paths),
+            )
+
+    def _remove_from_path_snapshot(self, path_id):
+        with self._snapshot_guard():
+            snapshot = getattr(self, '_path_library_snapshot', None)
+            if snapshot is None:
+                return
+            remaining_paths = [
+                dict(path or {})
+                for path in (snapshot or {}).get('paths', []) or []
+                if (path or {}).get('id') != path_id
+            ]
+            self._path_library_snapshot = self._build_snapshot_payload(
+                paths=remaining_paths,
+                summary=summarize_paths(remaining_paths),
+            )
+
+    def _get_canglangge_snapshot(self, force_refresh=False):
+        with self._snapshot_guard():
+            snapshot = getattr(self, '_canglangge_snapshot', None)
+            if snapshot is None or force_refresh:
+                rows = self.canglangge_candidate_service.list_candidates()
+                snapshot = self._build_snapshot_payload(candidates=[dict(row or {}) for row in rows])
+                self._canglangge_snapshot = snapshot
+            return {
+                'candidates': [dict(row or {}) for row in (snapshot or {}).get('candidates', []) or []],
+                'refreshed_at': self._snapshot_refreshed_at(snapshot),
+            }
+
+    def _remove_from_canglangge_snapshot(self, actor_names):
+        with self._snapshot_guard():
+            snapshot = getattr(self, '_canglangge_snapshot', None)
+            if snapshot is None:
+                return
+            target_names = {str(actor_name or '').strip() for actor_name in actor_names or [] if str(actor_name or '').strip()}
+            remaining_rows = [
+                dict(row or {})
+                for row in (snapshot or {}).get('candidates', []) or []
+                if str((row or {}).get('actor_name', '') or '').strip() not in target_names
+            ]
+            self._canglangge_snapshot = self._build_snapshot_payload(candidates=remaining_rows)
+
+    def _snapshot_guard(self):
+        return getattr(self, '_snapshot_lock', None) or nullcontext()
+
+    def _build_snapshot_payload(self, **fields):
+        return {
+            **fields,
+            'refreshed_at': self._current_snapshot_timestamp(),
+        }
+
+    @staticmethod
+    def _snapshot_refreshed_at(snapshot):
+        return str((snapshot or {}).get('refreshed_at', '') or '').strip()
+
+    @staticmethod
+    def _current_snapshot_timestamp():
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    @staticmethod
+    def _clone_ladder_board(board):
+        board = dict(board or {})
+        return {
+            **board,
+            'candidates': [dict(row or {}) for row in board.get('candidates', []) or []],
+            'selected': [dict(row or {}) for row in board.get('selected', []) or []],
+        }
 
     def enrich_videos(self, limit, show_browser=False, cooldown_before_search=False, target_type=None, source_key=None):
         self._begin_enrichment_task('single')

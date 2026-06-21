@@ -12,6 +12,12 @@ def make_handler(service):
     def _is_truthy_query_value(query, key):
         return str((query.get(key, [''])[0] or '')).strip().lower() in ('1', 'true', 'yes', 'on')
 
+    def _int_query_value(query, key, default=None):
+        raw_value = str((query.get(key, [''])[0] or '')).strip()
+        if not raw_value:
+            return default
+        return int(raw_value)
+
     class VideoBackendHandler(BaseHTTPRequestHandler):
         server_version = 'LocalVideoRenamerBackend/1.0'
 
@@ -56,7 +62,13 @@ def make_handler(service):
                 return service.import_videos(body.get('plans', []))
             if method == 'GET' and path == '/database/videos':
                 search_text = query.get('q', [''])[0]
-                return service.list_videos(search_text)
+                return service.list_videos(
+                    search_text,
+                    sort_field=query.get('sort_field', [''])[0],
+                    sort_order=query.get('sort_order', [''])[0],
+                    limit=_int_query_value(query, 'limit', default=None),
+                    offset=_int_query_value(query, 'offset', default=0),
+                )
             if method == 'GET' and path == '/database/videos/summary':
                 return service.get_video_enrichment_summary()
             if method == 'GET' and path == '/data-center/summary':
@@ -80,7 +92,13 @@ def make_handler(service):
                 return service.update_video_category(body.get('code'), body.get('category'))
             if method == 'GET' and path == '/database/actors':
                 search_text = query.get('q', [''])[0]
-                return service.list_actors(search_text)
+                return service.list_actors(
+                    search_text,
+                    sort_field=query.get('sort_field', [''])[0],
+                    sort_order=query.get('sort_order', [''])[0],
+                    limit=_int_query_value(query, 'limit', default=None),
+                    offset=_int_query_value(query, 'offset', default=0),
+                )
             if method == 'GET' and path == '/database/actors/detail':
                 actor_name = query.get('name', [''])[0]
                 return service.get_actor_detail(actor_name)
@@ -91,7 +109,7 @@ def make_handler(service):
                     body.get('age', ''),
                 )
             if method == 'GET' and path == '/canglangge/candidates':
-                return service.list_canglangge_candidates()
+                return service.list_canglangge_candidates(force_refresh=_is_truthy_query_value(query, 'refresh'))
             if method == 'POST' and path == '/canglangge/admit':
                 return service.admit_canglangge_candidates(body.get('actor_names', []))
             if method == 'POST' and path == '/canglangge/delete':
@@ -124,13 +142,16 @@ def make_handler(service):
             if method == 'POST' and path == '/database/code-prefixes/delete':
                 return service.delete_code_prefix(body.get('prefix'))
             if method == 'GET' and path == '/ladder/board':
-                return service.get_ladder_board(query.get('board_key', [''])[0])
+                return service.get_ladder_board(
+                    query.get('board_key', [''])[0],
+                    force_refresh=_is_truthy_query_value(query, 'refresh'),
+                )
             if method == 'POST' and path == '/ladder/entries/select':
                 return service.admit_ladder_entry(body.get('board_key'), body.get('entity_name'), body.get('tier'))
             if method == 'POST' and path == '/ladder/entries/medal':
                 return service.update_ladder_entry_medal(body.get('board_key'), body.get('entity_name'), body.get('medal'))
             if method == 'GET' and path == '/paths':
-                return service.list_paths()
+                return service.list_paths(force_refresh=_is_truthy_query_value(query, 'refresh'))
             if method == 'POST' and path == '/paths/add':
                 folder_path = body.get('folder_path')
                 if not folder_path:

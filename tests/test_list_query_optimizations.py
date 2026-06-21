@@ -1,8 +1,13 @@
+import shutil
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from datetime import date, timedelta
 
 from app.backend.service import BackendService
 from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS
+from app.data.database_handler import VideoDatabase
 from app.services.detail import ActorDetailLibrary, CodePrefixDetailLibrary
 from app.services.library import CodePrefixLibrary
 from app.services.video import VIDEO_CATEGORY_SINGLE
@@ -93,6 +98,40 @@ class BackendVideoListOptimizationTest(unittest.TestCase):
         self.assertEqual([row['code'] for row in result['videos']], ['ACT-001', 'LAD-001'])
         self.assertEqual(database.actor_queries, [['Actor Medal']])
         self.assertEqual(database.prefix_queries, [['LAD']])
+
+    def test_list_videos_passes_sort_and_pagination_to_database(self):
+        class FakeDatabase:
+            def __init__(self):
+                self.calls = []
+
+            def list_videos(self, search_text='', sort_field='code', sort_order='asc', limit=None, offset=0):
+                self.calls.append((search_text, sort_field, sort_order, limit, offset))
+                return [{'code': 'AAA-001', 'title': 'Video A', 'author': 'Actor A'}]
+
+            def count_videos(self, search_text=''):
+                self.count_search = search_text
+                return 345
+
+        database = FakeDatabase()
+        service = self._build_service(database)
+
+        result = BackendService.list_videos(
+            service,
+            'actor a',
+            sort_field='release_date',
+            sort_order='desc',
+            limit=50,
+            offset=100,
+        )
+
+        self.assertEqual(
+            database.calls,
+            [('actor a', 'release_date', 'desc', 50, 100)],
+        )
+        self.assertEqual(database.count_search, 'actor a')
+        self.assertEqual(result['total_count'], 345)
+        self.assertEqual(result['offset'], 100)
+        self.assertEqual(result['limit'], 50)
 
 
 class TargetedDetailQueryTest(unittest.TestCase):
@@ -196,6 +235,61 @@ class LibraryListMetadataTest(unittest.TestCase):
         self.assertEqual(result['actors'][0]['avfan_enrichment_status'], ENRICHED_STATUS)
         self.assertEqual(result['actors'][0]['javtxt_enrichment_status'], ENRICHED_STATUS)
 
+    def test_list_actors_passes_sort_and_pagination_to_database(self):
+        class FakeDatabase:
+            def __init__(self):
+                self.calls = []
+
+            def list_actors(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
+                self.calls.append((search_text, sort_field, sort_order, limit, offset))
+                return [
+                    {
+                        'name': 'ActorA',
+                        'actor_id': '1',
+                        'birthday': '',
+                        'age': '',
+                        'avfan_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'binghuo_enrichment_status': ENRICHED_STATUS,
+                    }
+                ]
+
+            def count_actors(self, search_text=''):
+                self.count_search = search_text
+                return 222
+
+            def list_local_videos_by_actor_names(self, actor_names):
+                return []
+
+            def list_actor_movies_by_names(self, actor_names):
+                return {}
+
+            def list_ladder_entries(self, board_key=None, entity_type=None):
+                return []
+
+        service = BackendService.__new__(BackendService)
+        service.db = FakeDatabase()
+        service.video_filter_service = _PassThroughFilterService()
+        service.ensure_database_loaded = lambda: None
+
+        result = BackendService.list_actors(
+            service,
+            'Actor',
+            sort_field='age',
+            sort_order='desc',
+            limit=80,
+            offset=160,
+        )
+
+        self.assertEqual(
+            service.db.calls,
+            [('Actor', 'age', 'desc', 80, 160)],
+        )
+        self.assertEqual(service.db.count_search, 'Actor')
+        self.assertEqual(result['total_count'], 222)
+        self.assertEqual(result['offset'], 160)
+        self.assertEqual(result['limit'], 80)
+
     def test_code_prefix_list_includes_raw_status_and_update_status(self):
         recent_date = (date.today() - timedelta(days=120)).isoformat()
 
@@ -263,3 +357,69 @@ class _PassThroughLadderTagService:
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DatabaseQueryPushdownIntegrationTest(unittest.TestCase):
+    def test_video_database_list_videos_supports_sql_sort_limit_and_offset(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.executemany(
+                    '''
+                    INSERT INTO processed_videos (
+                        code, title, author, duration, size, storage_location,
+                        release_date, maker, publisher,
+                        avfan_enrichment_status, javtxt_enrichment_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    [
+                        ('AAA-001', 'A', 'Actor A', '1:00:00', '1.0', 'D:/A', '2024-01-01', '', '', ENRICHED_STATUS, ENRICHED_STATUS),
+                        ('AAA-002', 'B', 'Actor B', '2:00:00', '2.0', 'D:/B', '2024-03-01', '', '', ENRICHED_STATUS, ENRICHED_STATUS),
+                        ('AAA-003', 'C', 'Actor C', '3:00:00', '3.0', 'D:/C', '2024-02-01', '', '', ENRICHED_STATUS, ENRICHED_STATUS),
+                    ],
+                )
+                conn.commit()
+
+            rows = db.list_videos(sort_field='release_date', sort_order='desc', limit=2, offset=1)
+
+            self.assertEqual([row['code'] for row in rows], ['AAA-003', 'AAA-001'])
+            self.assertEqual(db.count_videos(), 3)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_video_database_list_actors_supports_sql_sort_limit_and_offset(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.executemany(
+                    "INSERT INTO actors (name, birthday, age, matched) VALUES (?, ?, ?, 1)",
+                    [
+                        ('Actor A', '2001-01-01', '23'),
+                        ('Actor B', '2000-01-01', '30'),
+                        ('Actor C', '1999-01-01', '27'),
+                    ],
+                )
+                conn.executemany(
+                    '''
+                    INSERT INTO actor_enrichments (
+                        actor_name, avfan_enrichment_status, javtxt_enrichment_status, binghuo_enrichment_status
+                    ) VALUES (?, ?, ?, ?)
+                    ''',
+                    [
+                        ('Actor A', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS),
+                        ('Actor B', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS),
+                        ('Actor C', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS),
+                    ],
+                )
+                conn.commit()
+
+            rows = db.list_actors(sort_field='age', sort_order='desc', limit=2, offset=1)
+
+            self.assertEqual([row['name'] for row in rows], ['Actor C', 'Actor A'])
+            self.assertEqual(db.count_actors(), 3)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)

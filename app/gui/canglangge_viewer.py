@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -41,8 +42,10 @@ class CanglanggeViewerWindow(AsyncTaskHostMixin, QDialog):
         self.btn_batch_delete.clicked.connect(self.delete_selected_candidates)
 
         self.btn_refresh = QPushButton(tr('common.refresh'))
-        self.btn_refresh.clicked.connect(self.load_data)
+        self.btn_refresh.clicked.connect(lambda: self.load_data(force_refresh=True))
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
 
+        action_layout.addWidget(self.last_refreshed_label)
         action_layout.addStretch()
         action_layout.addWidget(self.btn_batch_admit)
         action_layout.addWidget(self.btn_batch_delete)
@@ -72,9 +75,9 @@ class CanglanggeViewerWindow(AsyncTaskHostMixin, QDialog):
             ]
         )
 
-    def load_data(self):
+    def load_data(self, force_refresh=False):
         self.start_async_task(
-            lambda: {'rows': self.backend_client.list_canglangge_candidates()},
+            lambda: self.backend_client.list_canglangge_candidates_snapshot(force_refresh=force_refresh),
             self._on_load_data_finished,
             tr('common.read_failed'),
         )
@@ -168,24 +171,26 @@ class CanglanggeViewerWindow(AsyncTaskHostMixin, QDialog):
     def _run_admit_task(self, actor_names):
         admitted_count = self.backend_client.admit_canglangge_candidates(actor_names)
         return {
-            'actor_names': list(actor_names),
             'admitted_count': admitted_count,
+            'snapshot': self.backend_client.list_canglangge_candidates_snapshot(),
         }
 
     def _run_delete_task(self, actor_names):
         deleted_count = self.backend_client.delete_canglangge_candidates(actor_names)
         return {
-            'actor_names': list(actor_names),
             'deleted_count': deleted_count,
+            'snapshot': self.backend_client.list_canglangge_candidates_snapshot(),
         }
 
     def _on_load_data_finished(self, result):
-        self.rows = list((result or {}).get('rows', []) or [])
+        payload = dict(result or {})
+        self.rows = list(payload.get('candidates', payload.get('rows', [])) or [])
+        refreshed_at = str(payload.get('refreshed_at', '') or '').strip() or tr('common.empty')
+        self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
         self.render_rows()
 
     def _on_admit_finished(self, result):
-        actor_names = self._normalize_actor_names((result or {}).get('actor_names', []))
-        self._remove_actor_names_locally(actor_names)
+        self._on_load_data_finished((result or {}).get('snapshot', {}))
         QMessageBox.information(
             self,
             tr('canglangge.admit_completed'),
@@ -193,8 +198,7 @@ class CanglanggeViewerWindow(AsyncTaskHostMixin, QDialog):
         )
 
     def _on_delete_finished(self, result):
-        actor_names = self._normalize_actor_names((result or {}).get('actor_names', []))
-        self._remove_actor_names_locally(actor_names)
+        self._on_load_data_finished((result or {}).get('snapshot', {}))
         QMessageBox.information(
             self,
             tr('canglangge.delete_completed'),

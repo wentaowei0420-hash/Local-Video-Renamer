@@ -46,6 +46,7 @@ ACTOR_COLUMN_AGE = 2
 ACTOR_COLUMN_STATUS = 3
 ACTOR_COLUMN_DETAIL = 4
 ACTOR_COLUMN_ACTIONS = 5
+DEFAULT_ACTOR_PAGE_SIZE = 200
 
 
 class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
@@ -54,6 +55,9 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.backend_client = backend_client
         self.all_rows = []
         self.rows = []
+        self.total_count = 0
+        self.current_offset = 0
+        self.page_size = DEFAULT_ACTOR_PAGE_SIZE
         self.detail_quick_filter_key = DETAIL_FILTER_ALL
         self.adding_actor = False
         self.adding_row = None
@@ -120,6 +124,11 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
 
         self.btn_refresh = QPushButton(tr('common.refresh'))
         self.btn_refresh.clicked.connect(self.load_data)
+        self.btn_prev_page = QPushButton(tr('video.category.page_prev'))
+        self.btn_prev_page.clicked.connect(self.go_to_previous_page)
+        self.btn_next_page = QPushButton(tr('video.category.page_next'))
+        self.btn_next_page.clicked.connect(self.go_to_next_page)
+        self.page_info_label = QLabel('')
 
         filter_layout.addWidget(QLabel(tr('common.filter_realtime')))
         filter_layout.addWidget(self.search_input)
@@ -138,6 +147,9 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         action_layout.addWidget(self.btn_reset_avfan)
         action_layout.addWidget(self.btn_reset_javtxt)
         action_layout.addWidget(self.btn_reset_binghuo)
+        action_layout.addWidget(self.page_info_label)
+        action_layout.addWidget(self.btn_prev_page)
+        action_layout.addWidget(self.btn_next_page)
         action_layout.addWidget(self.btn_refresh)
 
         self.table = QTableWidget()
@@ -166,10 +178,13 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
                 self.btn_reset_avfan,
                 self.btn_reset_javtxt,
                 self.btn_reset_binghuo,
+                self.btn_prev_page,
+                self.btn_next_page,
                 self.btn_refresh,
                 self.table,
             ]
         )
+        self._update_page_controls()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -205,8 +220,16 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             self.schedule_deferred_reload(0)
             return
         search_text = self.search_input.text().strip()
+        sort_field = self.sort_settings.get('sort_field', DEFAULT_ACTOR_SORT_FIELD)
+        sort_order = self.sort_settings.get('sort_order', DEFAULT_ACTOR_SORT_ORDER)
         self.start_async_task(
-            lambda: {'rows': self.backend_client.list_actors(search_text)},
+            lambda: self._list_actors_payload(
+                search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=self.page_size,
+                offset=self.current_offset,
+            ),
             self._on_load_data_finished,
             tr('common.read_failed'),
         )
@@ -412,6 +435,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
 
     def filter_data(self, text):
         self.clear_edit_state()
+        self.current_offset = 0
         self.schedule_deferred_reload()
 
     def apply_sort_settings(self):
@@ -431,7 +455,8 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             QMessageBox.critical(self, tr('common.save_failed'), tr('actor.viewer.sort_save_failed', error=exc))
             return
 
-        self.rebuild_visible_rows()
+        self.current_offset = 0
+        self.load_data()
 
     def apply_quick_filter_from_controls(self):
         current_name = self.current_selected_actor_name()
@@ -549,16 +574,14 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.set_actor_row_editable(self.editing_row, False)
 
         self.clear_edit_state()
-        search_text = self.search_input.text().strip()
         self.start_async_task(
-            lambda: self.reload_rows_after(
+            lambda: self._reload_actor_page_after(
                 lambda: self.backend_client.rename_actor(
                     old_name,
                     normalized_payload.get('name', ''),
                     birthday=normalized_payload.get('birthday', ''),
                     age=normalized_payload.get('age', ''),
                 ),
-                lambda: self.backend_client.list_actors(search_text),
                 old_name=old_name,
                 new_name=normalized_payload.get('name', ''),
             ),
@@ -655,11 +678,9 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         if answer != QMessageBox.Yes:
             return
 
-        search_text = self.search_input.text().strip()
         self.start_async_task(
-            lambda: self.reload_rows_after(
+            lambda: self._reload_actor_page_after(
                 lambda: self.backend_client.delete_actor(actor_name),
-                lambda: self.backend_client.list_actors(search_text),
                 actor_name=actor_name,
             ),
             self._on_delete_finished,
@@ -695,7 +716,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.start_async_task(
             lambda: {
                 'reset_count': self.backend_client.reset_actor_enrichments(actor_names, source_key=source_key),
-                'rows': self.backend_client.list_actors(search_text),
+                **self._current_actor_page_loader(),
                 'source_label': source_label,
             },
             self._on_reset_finished,
@@ -717,8 +738,24 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
 
     def _on_load_data_finished(self, result):
         self.clear_edit_state()
-        self.all_rows = list((result or {}).get('rows', []) or [])
+        payload = dict(result or {})
+        self.all_rows = list(payload.get('actors', payload.get('rows', [])) or [])
+        self.total_count = int(payload.get('total_count', len(self.all_rows)) or 0)
+        self.current_offset = int(payload.get('offset', self.current_offset) or 0)
+        self.page_size = int(payload.get('limit', self.page_size) or self.page_size)
         self.rebuild_visible_rows()
+        current_page = self.current_page_number()
+        total_pages = max((self.total_count + self.page_size - 1) // self.page_size, 1)
+        self.page_info_label.setText(
+            tr(
+                'video.category.page_info',
+                page=current_page,
+                total_pages=total_pages,
+                page_count=len(self.rows),
+                total_count=self.total_count,
+            )
+        )
+        self._update_page_controls()
 
     def _on_reset_finished(self, result):
         self._on_load_data_finished(result)
@@ -776,3 +813,58 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             str((row_data or {}).get('name', '') or '').strip() == target_name
             for row_data in self.all_rows
         )
+
+    def _current_actor_page_loader(self):
+        search_text = self.search_input.text().strip()
+        return self._list_actors_payload(
+            search_text,
+            sort_field=self.sort_settings.get('sort_field', DEFAULT_ACTOR_SORT_FIELD),
+            sort_order=self.sort_settings.get('sort_order', DEFAULT_ACTOR_SORT_ORDER),
+            limit=self.page_size,
+            offset=self.current_offset,
+        )
+
+    def _list_actors_payload(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
+        if hasattr(self.backend_client, 'list_actors_page'):
+            return self.backend_client.list_actors_page(
+                search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+            )
+        rows = self.backend_client.list_actors(search_text)
+        return {
+            'actors': list(rows or []),
+            'total_count': len(rows or []),
+            'limit': limit,
+            'offset': 0,
+        }
+
+    def _reload_actor_page_after(self, operation, **payload):
+        operation()
+        return {
+            **self._current_actor_page_loader(),
+            **payload,
+        }
+
+    def current_page_number(self):
+        return (self.current_offset // self.page_size) + 1 if self.page_size > 0 else 1
+
+    def go_to_previous_page(self):
+        if self.current_offset <= 0:
+            return
+        self.current_offset = max(self.current_offset - self.page_size, 0)
+        self.load_data()
+
+    def go_to_next_page(self):
+        if self.current_offset + self.page_size >= self.total_count:
+            return
+        self.current_offset += self.page_size
+        self.load_data()
+
+    def _update_page_controls(self):
+        has_previous = self.current_offset > 0
+        has_next = (self.current_offset + self.page_size) < max(self.total_count, 0)
+        self.btn_prev_page.setEnabled(has_previous and not self.is_async_task_running())
+        self.btn_next_page.setEnabled(has_next and not self.is_async_task_running())
