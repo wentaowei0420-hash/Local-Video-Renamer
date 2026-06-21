@@ -5,7 +5,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.core.enrichment_status import ENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import ENRICHED_STATUS, NO_SEARCH_RESULTS_STATUS, NO_VIDEO_DETAIL_STATUS, UNENRICHED_STATUS
 from app.data.database_handler import VideoDatabase
 from app.services.enrichment.actor_binghuo_enrichment import ActorBinghuoEnrichmentService
 
@@ -206,7 +206,7 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
         self.assertEqual(scraper.opened_targets, ['8888'])
         self.assertEqual(self.db.get_actor_enrichment_record('演员Y')['binghuo_birthday'], '2001-01-01')
 
-    def test_missing_birthday_keeps_actor_retryable_and_marks_unenriched(self):
+    def test_missing_birthday_is_marked_no_detail_and_not_retryable(self):
         actor_name = 'Actor Missing Birthday'
         self._insert_actor(actor_name, birthday='', age='')
         scraper = FakeBinghuoScraper(
@@ -238,17 +238,17 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
 
         result = service.enrich_next_actors(1)
 
-        self.assertEqual(result['results'][0]['status'], UNENRICHED_STATUS)
+        self.assertEqual(result['results'][0]['status'], NO_VIDEO_DETAIL_STATUS)
         self.assertEqual(result['success_count'], 0)
         record = self.db.get_actor_enrichment_record(actor_name)
         self.assertEqual(record['binghuo_person_id'], '36413')
-        self.assertEqual(record['binghuo_enrichment_status'], UNENRICHED_STATUS)
+        self.assertEqual(record['binghuo_enrichment_status'], NO_VIDEO_DETAIL_STATUS)
         self.assertEqual(record['binghuo_birthday'], '')
         self.assertEqual(record['binghuo_height'], '175')
         actor_row = self.db.list_actors(actor_name)[0]
         self.assertEqual(actor_row['birthday'], '')
         self.assertEqual(actor_row['raw_age'], '30')
-        self.assertIn(actor_name, [row['actor_name'] for row in service._candidate_actors()])
+        self.assertNotIn(actor_name, [row['actor_name'] for row in service._candidate_actors()])
 
     def test_logs_actor_level_result_fields_for_partial_binghuo_profile(self):
         actor_name = 'Actor Logged'
@@ -285,14 +285,14 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
         self.assertTrue(actor_result_logs)
         self.assertEqual(actor_result_logs[-1]['fields']['person_id'], '5001')
         self.assertFalse(actor_result_logs[-1]['fields']['birthday_found'])
-        self.assertEqual(actor_result_logs[-1]['fields']['status_written'], UNENRICHED_STATUS)
+        self.assertEqual(actor_result_logs[-1]['fields']['status_written'], NO_VIDEO_DETAIL_STATUS)
 
-    def test_existing_person_id_with_missing_birthday_is_retried(self):
+    def test_existing_partial_binghuo_profile_is_not_retried(self):
         actor_name = '\u307f\u306a\u307f\u7fbd\u7409'
         self._insert_actor(actor_name, birthday='', age='30')
         self.db.save_binghuo_actor_profile(
             actor_name,
-            ENRICHED_STATUS,
+            NO_VIDEO_DETAIL_STATUS,
             person_id='36413',
             birthday='',
             age='30',
@@ -322,11 +322,11 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
 
         result = service.enrich_next_actors(1)
 
-        self.assertEqual([row['actor_name'] for row in result['results']], [actor_name])
+        self.assertEqual(result['processed_count'], 0)
         actor_row = self.db.list_actors(actor_name)[0]
-        self.assertEqual(actor_row['birthday'], '1996/6/9')
+        self.assertEqual(actor_row['birthday'], '')
         record = self.db.get_actor_enrichment_record(actor_name)
-        self.assertEqual(record['binghuo_birthday'], '1996-06-09')
+        self.assertEqual(record['binghuo_birthday'], '')
 
 
 if __name__ == '__main__':

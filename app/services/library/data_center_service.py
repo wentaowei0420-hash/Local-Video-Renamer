@@ -210,11 +210,11 @@ class DataCenterService:
             total_count += 1
             record = records.get(actor_name, {})
             status = str((record or {}).get('binghuo_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
-            if self._has_binghuo_actor_data(record):
+            if self._is_complete_binghuo_profile(record):
                 success_count += 1
             elif status == NO_SEARCH_RESULTS_STATUS:
                 no_search_count += 1
-            elif status == NO_VIDEO_DETAIL_STATUS:
+            elif status == NO_VIDEO_DETAIL_STATUS or self._is_incomplete_binghuo_profile(record):
                 no_detail_count += 1
             elif status == FAILED_STATUS:
                 failed_count += 1
@@ -356,12 +356,25 @@ class DataCenterService:
         return int(match.group(0))
 
     @staticmethod
-    def _has_binghuo_actor_data(record):
+    def _has_binghuo_physical_data(record):
         current = dict(record or {})
         return any(
             str(current.get(field_name, '') or '').strip()
+            for field_name in ('binghuo_height', 'binghuo_bust', 'binghuo_waist', 'binghuo_hip')
+        )
+
+    @classmethod
+    def _is_complete_binghuo_profile(cls, record):
+        current = dict(record or {})
+        birthday = str(current.get('binghuo_birthday', '') or '').strip()
+        return bool(birthday) and cls._has_binghuo_physical_data(current)
+
+    @classmethod
+    def _is_incomplete_binghuo_profile(cls, record):
+        current = dict(record or {})
+        has_any_profile_data = any(
+            str(current.get(field_name, '') or '').strip()
             for field_name in (
-                'binghuo_person_id',
                 'binghuo_birthday',
                 'binghuo_age',
                 'binghuo_height',
@@ -370,6 +383,7 @@ class DataCenterService:
                 'binghuo_hip',
             )
         )
+        return has_any_profile_data and not cls._is_complete_binghuo_profile(current)
 
     @staticmethod
     def _current_cache_timestamp():

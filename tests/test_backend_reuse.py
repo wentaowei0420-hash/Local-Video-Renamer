@@ -22,6 +22,7 @@ class BackendReuseDecisionTest(unittest.TestCase):
         self.assertIn('actor-detail', BACKEND_API_REVISION)
         self.assertIn('birthday-display', BACKEND_API_REVISION)
         self.assertIn('data-center-analysis-cache', BACKEND_API_REVISION)
+        self.assertIn('binghuo-no-detail', BACKEND_API_REVISION)
 
     def test_reuses_same_project_compatible_backend(self):
         health = {

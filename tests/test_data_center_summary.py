@@ -229,7 +229,7 @@ class DataCenterSummarySplitCountsTest(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def test_actor_binghuo_summary_uses_task_result_status_and_any_profile_data(self):
+    def test_actor_binghuo_summary_counts_incomplete_profiles_as_no_detail(self):
         temp_dir = tempfile.mkdtemp()
         try:
             db_path = Path(temp_dir) / "video_database.db"
@@ -252,15 +252,16 @@ class DataCenterSummarySplitCountsTest(unittest.TestCase):
                         actor_name,
                         binghuo_enrichment_status,
                         binghuo_person_id,
+                        binghuo_birthday,
                         binghuo_height
                     )
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     [
-                        ("Actor Success", ENRICHED_STATUS, "1001", ""),
-                        ("Actor Partial", UNENRICHED_STATUS, "", "170"),
-                        ("Actor No Search", NO_SEARCH_RESULTS_STATUS, "", ""),
-                        ("Actor Failed", FAILED_STATUS, "", ""),
+                        ("Actor Success", ENRICHED_STATUS, "1001", "1990-01-01", "168"),
+                        ("Actor Partial", NO_VIDEO_DETAIL_STATUS, "", "", "170"),
+                        ("Actor No Search", NO_SEARCH_RESULTS_STATUS, "", "", ""),
+                        ("Actor Failed", FAILED_STATUS, "", "", ""),
                     ],
                 )
                 conn.commit()
@@ -269,8 +270,9 @@ class DataCenterSummarySplitCountsTest(unittest.TestCase):
             binghuo_summary = summary["actor_library"]["sources"][BINGHUO_ACTOR_SOURCE]
 
             self.assertEqual(binghuo_summary["total_count"], 5)
-            self.assertEqual(binghuo_summary["success_count"], 2)
+            self.assertEqual(binghuo_summary["success_count"], 1)
             self.assertEqual(binghuo_summary["no_search_count"], 1)
+            self.assertEqual(binghuo_summary["no_detail_count"], 1)
             self.assertEqual(binghuo_summary["failed_count"], 1)
             self.assertEqual(binghuo_summary["pending_count"], 1)
             self.assertEqual(binghuo_summary["enriched_count"], 3)

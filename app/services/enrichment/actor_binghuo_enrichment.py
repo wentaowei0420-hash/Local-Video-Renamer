@@ -1,7 +1,13 @@
 import re
 
 from app.core.enrichment_sources import BINGHUO_ACTOR_SOURCE, get_video_enrichment_source_label
-from app.core.enrichment_status import ENRICHED_STATUS, FAILED_STATUS, NO_SEARCH_RESULTS_STATUS, UNENRICHED_STATUS
+from app.core.enrichment_status import (
+    ENRICHED_STATUS,
+    FAILED_STATUS,
+    NO_SEARCH_RESULTS_STATUS,
+    NO_VIDEO_DETAIL_STATUS,
+    UNENRICHED_STATUS,
+)
 from app.core.enrichment_targets import ACTOR_BIRTHDAY_TARGET
 from app.scraper.binghuo_actor_scraper import BinghuoActorScraper
 from app.services.enrichment import start_progress_tracker
@@ -167,7 +173,9 @@ class ActorBinghuoEnrichmentService:
     @staticmethod
     def _should_process_missing_birthday(record):
         status = str((record or {}).get('binghuo_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
-        if status == NO_SEARCH_RESULTS_STATUS:
+        if status in (NO_SEARCH_RESULTS_STATUS, NO_VIDEO_DETAIL_STATUS):
+            return False
+        if ActorBinghuoEnrichmentService._is_incomplete_binghuo_profile(record):
             return False
         return True
 
@@ -184,7 +192,7 @@ class ActorBinghuoEnrichmentService:
     def _should_process_profile_only(record):
         status = str((record or {}).get('binghuo_enrichment_status', '') or '').strip() or UNENRICHED_STATUS
         person_id = str((record or {}).get('binghuo_person_id', '') or '').strip()
-        return not person_id and status != NO_SEARCH_RESULTS_STATUS
+        return not person_id and status not in (NO_SEARCH_RESULTS_STATUS, NO_VIDEO_DETAIL_STATUS)
 
     def _enrich_single_actor(self, page, actor_name):
         record = self.database.get_actor_enrichment_record(actor_name)
@@ -224,7 +232,7 @@ class ActorBinghuoEnrichmentService:
             or str(person_id or '').strip()
             or self.scraper.extract_person_id(current_url)
         )
-        resolved_status = ENRICHED_STATUS if birthday else UNENRICHED_STATUS
+        resolved_status = ENRICHED_STATUS if self._is_complete_binghuo_profile(profile) else NO_VIDEO_DETAIL_STATUS
         self.database.save_binghuo_actor_profile(
             actor_name,
             resolved_status,
@@ -248,6 +256,39 @@ class ActorBinghuoEnrichmentService:
             'waist': waist,
             'hip': hip,
         }
+
+    @staticmethod
+    def _has_binghuo_physical_data(record):
+        return any(
+            str((record or {}).get(field_name, '') or '').strip()
+            for field_name in ('height', 'bust', 'waist', 'hip', 'binghuo_height', 'binghuo_bust', 'binghuo_waist', 'binghuo_hip')
+        )
+
+    @classmethod
+    def _is_complete_binghuo_profile(cls, record):
+        birthday = str((record or {}).get('birthday', (record or {}).get('binghuo_birthday', '')) or '').strip()
+        return bool(birthday) and cls._has_binghuo_physical_data(record)
+
+    @classmethod
+    def _is_incomplete_binghuo_profile(cls, record):
+        has_any_profile_data = any(
+            str((record or {}).get(field_name, '') or '').strip()
+            for field_name in (
+                'birthday',
+                'binghuo_birthday',
+                'age',
+                'binghuo_age',
+                'height',
+                'binghuo_height',
+                'bust',
+                'binghuo_bust',
+                'waist',
+                'binghuo_waist',
+                'hip',
+                'binghuo_hip',
+            )
+        )
+        return has_any_profile_data and not cls._is_complete_binghuo_profile(record)
 
     @classmethod
     def _is_exact_match(cls, actor_name, result):
