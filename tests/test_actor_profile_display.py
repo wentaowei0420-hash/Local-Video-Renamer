@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.core.enrichment_sources import (
     AVFAN_VIDEO_SOURCE,
+    BAOMU_ACTOR_SOURCE,
     BINGHUO_ACTOR_SOURCE,
     JAVTXT_VIDEO_SOURCE,
     get_video_enrichment_source_label,
@@ -97,7 +98,8 @@ class ActorProfileDisplayTest(unittest.TestCase):
             expected_status = (
                 f'{get_video_enrichment_source_label(AVFAN_VIDEO_SOURCE)}: {ENRICHED_STATUS} | '
                 f'{get_video_enrichment_source_label(JAVTXT_VIDEO_SOURCE)}: {FAILED_STATUS} | '
-                f'{get_video_enrichment_source_label(BINGHUO_ACTOR_SOURCE)}: {ENRICHED_STATUS}'
+                f'{get_video_enrichment_source_label(BINGHUO_ACTOR_SOURCE)}: {ENRICHED_STATUS} | '
+                f'{get_video_enrichment_source_label(BAOMU_ACTOR_SOURCE)}: {UNENRICHED_STATUS}'
             )
             self.assertEqual(rows[0]['enrichment_status'], expected_status)
 
@@ -147,7 +149,52 @@ class ActorProfileDisplayTest(unittest.TestCase):
             expected_status = (
                 f'{get_video_enrichment_source_label(AVFAN_VIDEO_SOURCE)}: {UNENRICHED_STATUS} | '
                 f'{get_video_enrichment_source_label(JAVTXT_VIDEO_SOURCE)}: {UNENRICHED_STATUS} | '
-                f'{get_video_enrichment_source_label(BINGHUO_ACTOR_SOURCE)}: {NO_VIDEO_DETAIL_STATUS}'
+                f'{get_video_enrichment_source_label(BINGHUO_ACTOR_SOURCE)}: {NO_VIDEO_DETAIL_STATUS} | '
+                f'{get_video_enrichment_source_label(BAOMU_ACTOR_SOURCE)}: {UNENRICHED_STATUS}'
+            )
+            self.assertEqual(rows[0]['enrichment_status'], expected_status)
+
+            del rows
+            del db
+            gc.collect()
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_list_actors_falls_back_to_baomu_birthday_and_includes_baomu_status(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "INSERT INTO actors (name, birthday, age, matched) VALUES (?, ?, ?, 1)",
+                    ('Actor From Baomu', '', '未知'),
+                )
+                conn.commit()
+
+            db.save_actor_enrichment('Actor From Baomu', ENRICHED_STATUS)
+            db.save_binghuo_actor_profile('Actor From Baomu', ENRICHED_STATUS, person_id='1001', birthday='', age='')
+            db.save_baomu_actor_profile(
+                'Actor From Baomu',
+                ENRICHED_STATUS,
+                birthday='1990-08-25',
+                height='163',
+                bust='87',
+                waist='60',
+                hip='84',
+            )
+
+            rows = db.list_actors('Actor From Baomu')
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['birthday'], '1990/8/25')
+            self.assertEqual(rows[0]['age'], '35')
+            self.assertEqual(rows[0]['baomu_enrichment_status'], ENRICHED_STATUS)
+            expected_status = (
+                f'{get_video_enrichment_source_label(AVFAN_VIDEO_SOURCE)}: {ENRICHED_STATUS} | '
+                f'{get_video_enrichment_source_label(JAVTXT_VIDEO_SOURCE)}: {UNENRICHED_STATUS} | '
+                f'{get_video_enrichment_source_label(BINGHUO_ACTOR_SOURCE)}: {ENRICHED_STATUS} | '
+                f'{get_video_enrichment_source_label(BAOMU_ACTOR_SOURCE)}: {ENRICHED_STATUS}'
             )
             self.assertEqual(rows[0]['enrichment_status'], expected_status)
 
@@ -289,6 +336,7 @@ class ActorProfileDisplayTest(unittest.TestCase):
         detail = ActorDetailLibrary(FakeDatabase()).get_actor_detail('Actor Baomu')
 
         self.assertEqual(detail['birthday'], '1984/5/20')
+        self.assertEqual(detail['age'], '42')
         self.assertEqual(detail['binghuo_height'], '171')
         self.assertEqual(detail['binghuo_bust'], '101')
         self.assertEqual(detail['binghuo_waist'], '63')

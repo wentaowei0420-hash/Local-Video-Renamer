@@ -4,6 +4,7 @@ import unittest
 from contextlib import closing
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from app.core.filename_rules import extract_code_from_filename
 from app.core.enrichment_sources import BAOMU_ACTOR_SOURCE, BINGHUO_ACTOR_SOURCE, JAVTXT_VIDEO_SOURCE
@@ -24,9 +25,11 @@ from app.services.video import (
     MANUAL_CATEGORY_TIER_FIRST,
     MANUAL_CATEGORY_TIER_SECOND,
     MANUAL_CATEGORY_TIER_THIRD,
+    VIDEO_CATEGORY_CO_STAR,
     classify_manual_category_tier,
     detect_video_category,
     VIDEO_CATEGORY_COLLECTION,
+    VIDEO_CATEGORY_SINGLE,
 )
 
 
@@ -106,6 +109,11 @@ class VideoCodeStandardizationTest(unittest.TestCase):
                 }
             )
         )
+
+    def test_detect_video_category_supports_forced_single_or_co_star_classification(self):
+        self.assertEqual(detect_video_category('', '婕斿憳A', force_single_or_co_star=True), VIDEO_CATEGORY_SINGLE)
+        self.assertEqual(detect_video_category('', '婕斿憳A 婕斿憳B', force_single_or_co_star=True), VIDEO_CATEGORY_CO_STAR)
+        self.assertEqual(detect_video_category('', '', force_single_or_co_star=True), VIDEO_CATEGORY_CO_STAR)
 
     def test_javtxt_summary_separates_success_no_result_and_no_detail(self):
         summary = summarize_javtxt_movies(
@@ -787,6 +795,76 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
         self.assertEqual(tier_by_code['ABCD-001'], MANUAL_CATEGORY_TIER_FIRST)
         self.assertEqual(tier_by_code['EFGH-002'], MANUAL_CATEGORY_TIER_SECOND)
         self.assertEqual(tier_by_code['IJKL-003'], MANUAL_CATEGORY_TIER_THIRD)
+
+    @patch(
+        'app.data.database_handler.load_video_filter_settings',
+        return_value={
+            'rules': {
+                'code': [],
+                'title': [],
+                'javtxt_tags': [],
+                'co_star_code': ['MIDV-', 'ABP-'],
+            }
+        },
+    )
+    def test_co_star_code_keywords_auto_classify_videos_and_skip_manual_category_queue(self, _load_settings):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    '''
+                    INSERT INTO processed_videos (
+                        code, title, release_date, javtxt_title, javtxt_url,
+                        javtxt_actors, javtxt_actors_raw, javtxt_tags,
+                        javtxt_enrichment_status, video_category, javtxt_release_date
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    ('MIDV-001', 'keyword no actor', '2025-02-01', 'keyword no actor', 'https://javtxt.top/v/1', '', '', 'tag', ENRICHED_STATUS, '', '2025-02-01'),
+                )
+                conn.execute(
+                    '''
+                    INSERT INTO code_prefix_movies (
+                        prefix, code, title, author, release_date, javtxt_url,
+                        javtxt_tags, author_raw, video_category, javtxt_release_date
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''',
+                    ('ABP', 'ABP-123', 'keyword single actor', '婕斿憳A', '2025-02-01', 'https://javtxt.top/v/2', 'tag', '婕斿憳A', '', '2025-02-01'),
+                )
+                conn.execute(
+                    '''
+                    INSERT INTO actor_movies (
+                        actor_name, code, title, author, release_date, avfan_url, page_number,
+                        javtxt_enrichment_status, javtxt_movie_id, javtxt_url, javtxt_tags, javtxt_release_date, author_raw, video_category
+                    )
+                    VALUES (?, ?, ?, ?, ?, '', 1, ?, '', ?, ?, ?, ?, ?)
+                    ''',
+                    ('婕斿憳A', 'ABP-123', 'keyword single actor', '婕斿憳A', '2025-02-01', ENRICHED_STATUS, 'https://javtxt.top/v/2', 'tag', '2025-02-01', '婕斿憳A', ''),
+                )
+                conn.commit()
+
+            rows = db.list_videos_requiring_manual_category()['videos']
+
+            with closing(sqlite3.connect(db_path)) as conn:
+                processed_category = conn.execute(
+                    'SELECT video_category FROM processed_videos WHERE code = ?',
+                    ('MIDV-001',),
+                ).fetchone()
+                prefix_category = conn.execute(
+                    'SELECT video_category FROM code_prefix_movies WHERE prefix = ? AND code = ?',
+                    ('ABP', 'ABP-123'),
+                ).fetchone()
+                actor_category = conn.execute(
+                    'SELECT video_category FROM actor_movies WHERE actor_name = ? AND code = ?',
+                    ('婕斿憳A', 'ABP-123'),
+                ).fetchone()
+
+        self.assertEqual(rows, [])
+        self.assertEqual(processed_category, (VIDEO_CATEGORY_CO_STAR,))
+        self.assertEqual(prefix_category, (VIDEO_CATEGORY_SINGLE,))
+        self.assertEqual(actor_category, (VIDEO_CATEGORY_SINGLE,))
 
     def test_replace_code_prefix_movies_preserves_processed_video_no_result_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:

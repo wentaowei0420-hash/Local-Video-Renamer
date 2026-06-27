@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 from app.core.project_paths import VIDEO_FILTER_SETTINGS_FILE
 from app.core.video_filter_rules import (
     FILTER_FIELD_CODE,
+    FILTER_FIELD_CO_STAR_CODE,
     FILTER_FIELD_JAVTXT_TAGS,
     FILTER_FIELD_TITLE,
     get_filter_keywords,
@@ -116,10 +117,16 @@ class VideoFilterDialog(QDialog):
             tr('video.filter.group.javtxt_tags_hint'),
             self,
         )
+        self.co_star_code_editor = KeywordRuleEditor(
+            tr('video.filter.group.co_star_code'),
+            tr('video.filter.group.co_star_code_hint'),
+            self,
+        )
 
         layout.addWidget(self.code_editor)
         layout.addWidget(self.title_editor)
         layout.addWidget(self.tags_editor)
+        layout.addWidget(self.co_star_code_editor)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.save_and_accept)
@@ -131,6 +138,7 @@ class VideoFilterDialog(QDialog):
         self.code_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_CODE))
         self.title_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_TITLE))
         self.tags_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_JAVTXT_TAGS))
+        self.co_star_code_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_CO_STAR_CODE))
 
     def build_settings_payload(self):
         return {
@@ -138,6 +146,7 @@ class VideoFilterDialog(QDialog):
                 FILTER_FIELD_CODE: self.code_editor.keywords(),
                 FILTER_FIELD_TITLE: self.title_editor.keywords(),
                 FILTER_FIELD_JAVTXT_TAGS: self.tags_editor.keywords(),
+                FILTER_FIELD_CO_STAR_CODE: self.co_star_code_editor.keywords(),
             }
         }
 

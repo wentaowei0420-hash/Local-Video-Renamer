@@ -459,6 +459,72 @@ class DatabaseQueryPushdownIntegrationTest(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_video_database_list_actors_sorts_by_baomu_birthday_when_primary_birthday_is_placeholder(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.executemany(
+                    "INSERT INTO actors (name, birthday, age, matched) VALUES (?, ?, ?, 1)",
+                    [
+                        ('Actor From Baomu', '未知', '未知'),
+                        ('Actor Direct', '1990-01-01', '30'),
+                    ],
+                )
+                conn.executemany(
+                    '''
+                    INSERT INTO actor_enrichments (
+                        actor_name, avfan_enrichment_status, javtxt_enrichment_status, binghuo_enrichment_status,
+                        baomu_enrichment_status, baomu_birthday
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ''',
+                    [
+                        ('Actor From Baomu', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, '1984-05-20'),
+                        ('Actor Direct', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ''),
+                    ],
+                )
+                conn.commit()
+
+            rows = db.list_actors(sort_field='birthday', sort_order='asc')
+
+            self.assertEqual([row['name'] for row in rows], ['Actor From Baomu', 'Actor Direct'])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_video_database_list_actors_sorts_by_computed_age_from_baomu_birthday_when_primary_age_is_placeholder(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = Path(temp_dir) / 'video_database.db'
+            db = VideoDatabase(db_path)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.executemany(
+                    "INSERT INTO actors (name, birthday, age, matched) VALUES (?, ?, ?, 1)",
+                    [
+                        ('Actor From Baomu', '未知', '未知'),
+                        ('Actor Younger', '1996-01-01', '30'),
+                    ],
+                )
+                conn.executemany(
+                    '''
+                    INSERT INTO actor_enrichments (
+                        actor_name, avfan_enrichment_status, javtxt_enrichment_status, binghuo_enrichment_status,
+                        baomu_enrichment_status, baomu_birthday
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ''',
+                    [
+                        ('Actor From Baomu', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, '1984-05-20'),
+                        ('Actor Younger', ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ENRICHED_STATUS, ''),
+                    ],
+                )
+                conn.commit()
+
+            rows = db.list_actors(sort_field='age', sort_order='desc')
+
+            self.assertEqual([row['name'] for row in rows], ['Actor From Baomu', 'Actor Younger'])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def test_video_database_list_code_prefix_summaries_supports_sql_sort_limit_and_offset(self):
         temp_dir = tempfile.mkdtemp()
         try:

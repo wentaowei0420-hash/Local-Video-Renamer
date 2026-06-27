@@ -1,6 +1,7 @@
 import re
 import sqlite3
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 from app.core.enrichment_status import (
@@ -45,6 +46,8 @@ from app.core.actor_profile_display import (
 )
 from app.core.second_source_actor_text import is_unpublished_actor_text, normalize_second_source_actor_text
 from app.core.project_paths import DATABASE_FILE
+from app.core.video_filter_rules import FILTER_FIELD_CO_STAR_CODE, get_filter_keywords, matches_filter_keywords
+from app.core.video_filter_settings import load_video_filter_settings
 from app.data.repositories import (
     ActorRepositoryMixin,
     CodePrefixRepositoryMixin,
@@ -95,6 +98,9 @@ class VideoDatabase(
     def _connect(self):
         conn = sqlite3.connect(self.db_path, timeout=60)
         conn.execute('PRAGMA busy_timeout = 60000')
+        conn.create_function('effective_actor_birthday_sql', 3, self._sql_effective_actor_birthday)
+        conn.create_function('sortable_actor_birthday_sql', 3, self._sql_sortable_actor_birthday)
+        conn.create_function('effective_actor_age_sql', 5, self._sql_effective_actor_age)
         try:
             yield conn
         finally:
@@ -567,11 +573,29 @@ class VideoDatabase(
     def _normalize_video_category_fields(tags_text, actors_text):
         return str(tags_text or '').strip(), sanitize_actor_text(actors_text)
 
-    def _determine_auto_video_category(self, tags_text, actors_text):
-        normalized_tags, normalized_actors = self._normalize_video_category_fields(tags_text, actors_text)
-        return detect_video_category(normalized_tags, normalized_actors)
+    @staticmethod
+    def _load_video_category_filter_settings():
+        return load_video_filter_settings()
 
-    def _resolve_web_movie_category(self, movie):
+    def _matches_co_star_code_keyword(self, code, filter_settings=None):
+        normalized_code = standardize_video_code(code)
+        if not normalized_code:
+            return False
+        active_settings = filter_settings if isinstance(filter_settings, dict) else self._load_video_category_filter_settings()
+        return matches_filter_keywords(
+            normalized_code,
+            get_filter_keywords(active_settings, FILTER_FIELD_CO_STAR_CODE),
+        )
+
+    def _determine_auto_video_category(self, code, tags_text, actors_text, filter_settings=None):
+        normalized_tags, normalized_actors = self._normalize_video_category_fields(tags_text, actors_text)
+        return detect_video_category(
+            normalized_tags,
+            normalized_actors,
+            force_single_or_co_star=self._matches_co_star_code_keyword(code, filter_settings=filter_settings),
+        )
+
+    def _resolve_web_movie_category(self, movie, filter_settings=None):
         explicit_category = normalize_video_category((movie or {}).get('video_category', ''))
         if explicit_category:
             return explicit_category
@@ -581,15 +605,17 @@ class VideoDatabase(
             return processed_category
 
         return self._determine_auto_video_category(
+            (movie or {}).get('code', ''),
             (movie or {}).get('javtxt_tags', ''),
             (movie or {}).get('author', ''),
+            filter_settings=filter_settings,
         )
 
     @staticmethod
     def _normalize_actor_raw_text(value):
         return normalize_actor_raw_text(value)
 
-    def _refresh_video_category(self, cursor, code, tags_text=None, actors_text=None):
+    def _refresh_video_category(self, cursor, code, tags_text=None, actors_text=None, filter_settings=None):
         normalized_code = standardize_video_code(code)
         if not normalized_code:
             return
@@ -608,7 +634,12 @@ class VideoDatabase(
 
         effective_tags = row[0] if tags_text is None else tags_text
         effective_actors = row[1] if actors_text is None else actors_text
-        auto_category = self._determine_auto_video_category(effective_tags, effective_actors)
+        auto_category = self._determine_auto_video_category(
+            normalized_code,
+            effective_tags,
+            effective_actors,
+            filter_settings=filter_settings,
+        )
         current_category = normalize_video_category(row[2])
         if auto_category and auto_category != current_category:
             cursor.execute(
@@ -620,11 +651,12 @@ class VideoDatabase(
                 (auto_category, normalized_code),
             )
 
-    def _backfill_video_categories(self, cursor):
+    def _backfill_video_categories(self, cursor, filter_settings=None):
         cursor.execute(
             '''
             SELECT code, javtxt_tags, javtxt_actors, video_category
             FROM processed_videos
+            WHERE COALESCE(video_category, '') = ''
             '''
         )
         rows = cursor.fetchall()
@@ -632,10 +664,12 @@ class VideoDatabase(
             code = standardize_video_code(row[0])
             if not code:
                 continue
-            current_category = normalize_video_category(row[3])
-            if current_category:
-                continue
-            auto_category = self._determine_auto_video_category(row[1], row[2])
+            auto_category = self._determine_auto_video_category(
+                code,
+                row[1],
+                row[2],
+                filter_settings=filter_settings,
+            )
             if not auto_category:
                 continue
             cursor.execute(
@@ -647,19 +681,16 @@ class VideoDatabase(
                 (auto_category, code),
             )
 
-    def _backfill_web_movie_categories(self, cursor, table_name):
+    def _backfill_web_movie_categories(self, cursor, table_name, filter_settings=None):
         cursor.execute(
             f'''
             SELECT rowid, code, author, javtxt_tags, video_category
             FROM {table_name}
+            WHERE COALESCE(video_category, '') = ''
             '''
         )
         rows = cursor.fetchall()
         for rowid, code, author, javtxt_tags, current_category in rows:
-            normalized_current = normalize_video_category(current_category)
-            if normalized_current:
-                continue
-
             normalized_code = standardize_video_code(code)
             processed_category = ''
             if normalized_code:
@@ -674,8 +705,12 @@ class VideoDatabase(
                 processed_row = cursor.fetchone()
                 if processed_row is not None:
                     processed_category = normalize_video_category(processed_row[0])
-
-            auto_category = processed_category or self._determine_auto_video_category(javtxt_tags, author)
+            auto_category = processed_category or self._determine_auto_video_category(
+                normalized_code,
+                javtxt_tags,
+                author,
+                filter_settings=filter_settings,
+            )
             if not auto_category:
                 continue
 
@@ -687,6 +722,34 @@ class VideoDatabase(
                 ''',
                 (auto_category, rowid),
             )
+
+    def _clear_staged_video_categories_for_categorized_codes(self, cursor):
+        cursor.execute(
+            '''
+            DELETE FROM manual_category_staging
+            WHERE code IN (
+                SELECT code FROM processed_videos WHERE COALESCE(video_category, '') <> ''
+                UNION
+                SELECT code FROM code_prefix_movies WHERE COALESCE(video_category, '') <> ''
+                UNION
+                SELECT code FROM actor_movies WHERE COALESCE(video_category, '') <> ''
+            )
+            '''
+        )
+
+    def refresh_video_categories_from_filter_rules(self):
+        filter_settings = self._load_video_category_filter_settings()
+        if not get_filter_keywords(filter_settings, FILTER_FIELD_CO_STAR_CODE):
+            return 0
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            before_changes = conn.total_changes
+            self._backfill_video_categories(cursor, filter_settings=filter_settings)
+            self._backfill_web_movie_categories(cursor, 'code_prefix_movies', filter_settings=filter_settings)
+            self._backfill_web_movie_categories(cursor, 'actor_movies', filter_settings=filter_settings)
+            self._clear_staged_video_categories_for_categorized_codes(cursor)
+            conn.commit()
+            return int(conn.total_changes - before_changes)
 
     def _clear_ineligible_web_movie_javtxt_state(self, cursor, table_name):
         if table_name not in {'code_prefix_movies', 'actor_movies'}:
@@ -1181,7 +1244,7 @@ class VideoDatabase(
         match = re.match(r'^([A-Z]+)', str(code or '').strip().upper())
         return match.group(1) if match else ''
 
-    def _normalize_web_movie_javtxt_fields(self, movie, processed_record=None):
+    def _normalize_web_movie_javtxt_fields(self, movie, processed_record=None, filter_settings=None):
         processed_record = processed_record or {}
         tags = self._first_nonblank_text((movie or {}).get('javtxt_tags', ''), processed_record.get('javtxt_tags', ''))
         merged_status = self._first_nonblank_text(
@@ -1201,7 +1264,8 @@ class VideoDatabase(
                 **dict(movie or {}),
                 'javtxt_tags': tags,
                 'processed_video_category': processed_record.get('video_category', ''),
-            }
+            },
+            filter_settings=filter_settings,
         )
         candidate = {
             **dict(movie or {}),
@@ -1714,13 +1778,57 @@ class VideoDatabase(
 
         return success_count
 
+    @staticmethod
+    def _sql_effective_actor_birthday(primary_birthday, binghuo_birthday, baomu_birthday):
+        normalized_primary = normalize_second_source_actor_text(primary_birthday)
+        if normalized_primary:
+            return normalize_actor_birthday_for_storage(normalized_primary)
+        for value in (binghuo_birthday, baomu_birthday):
+            normalized_value = normalize_second_source_actor_text(value)
+            if normalized_value:
+                return normalize_actor_birthday_for_storage(normalized_value)
+        return str(primary_birthday or '').strip()
+
+    @staticmethod
+    def _sql_sortable_actor_birthday(primary_birthday, binghuo_birthday, baomu_birthday):
+        for value in (primary_birthday, binghuo_birthday, baomu_birthday):
+            normalized_value = normalize_second_source_actor_text(value)
+            if normalized_value:
+                return normalize_actor_birthday_for_storage(normalized_value)
+        return ''
+
+    @classmethod
+    def _sql_effective_actor_age(cls, primary_age, binghuo_age, primary_birthday, binghuo_birthday, baomu_birthday):
+        for value in (primary_age, binghuo_age):
+            normalized_value = normalize_second_source_actor_text(value)
+            if normalized_value and normalized_value.isdigit():
+                return str(int(normalized_value))
+        birthday = cls._sql_effective_actor_birthday(primary_birthday, binghuo_birthday, baomu_birthday)
+        if not birthday:
+            return ''
+        try:
+            birthday_date = date.fromisoformat(birthday)
+        except ValueError:
+            return ''
+        today = date.today()
+        age = today.year - birthday_date.year
+        if (today.month, today.day) < (birthday_date.month, birthday_date.day):
+            age -= 1
+        return str(max(age, 0))
+
     @classmethod
     def _actor_order_by_sql(cls, sort_field='name', sort_order='asc'):
         direction = cls._normalize_list_sort_order(sort_order)
         order_sql_map = {
             'name': f'UPPER(a.name) {direction}',
-            'birthday': f'COALESCE(NULLIF(a.birthday, \'\'), \'\') {direction}, UPPER(a.name) {direction}',
-            'age': f'CAST(COALESCE(NULLIF(a.age, \'\'), \'0\') AS INTEGER) {direction}, UPPER(a.name) {direction}',
+            'birthday': (
+                "sortable_actor_birthday_sql(a.birthday, e.binghuo_birthday, e.baomu_birthday) "
+                f"{direction}, UPPER(a.name) {direction}"
+            ),
+            'age': (
+                "CAST(effective_actor_age_sql(a.age, e.binghuo_age, a.birthday, e.binghuo_birthday, e.baomu_birthday) AS INTEGER) "
+                f"{direction}, UPPER(a.name) {direction}"
+            ),
         }
         return order_sql_map.get(str(sort_field or '').strip(), order_sql_map['name'])
 
@@ -1738,7 +1846,9 @@ class VideoDatabase(
             clauses.append(
                 '''
                 (
-                    a.name LIKE ? OR a.birthday LIKE ? OR a.age LIKE ?
+                    a.name LIKE ?
+                    OR effective_actor_birthday_sql(a.birthday, e.binghuo_birthday, e.baomu_birthday) LIKE ?
+                    OR effective_actor_age_sql(a.age, e.binghuo_age, a.birthday, e.binghuo_birthday, e.baomu_birthday) LIKE ?
                     OR COALESCE(e.actor_id, '') LIKE ?
                     OR COALESCE(e.enrichment_status, ?) LIKE ?
                 )
@@ -1755,10 +1865,12 @@ class VideoDatabase(
         avfan_enrichment_status = normalize_source_enrichment_status(row[5] or UNENRICHED_STATUS, AVFAN_VIDEO_SOURCE)
         javtxt_enrichment_status = normalize_source_enrichment_status(row[6] or UNENRICHED_STATUS, JAVTXT_VIDEO_SOURCE)
         binghuo_enrichment_status = normalize_source_enrichment_status(row[7] or UNENRICHED_STATUS, BINGHUO_ACTOR_SOURCE)
+        baomu_enrichment_status = normalize_source_enrichment_status(row[8] or UNENRICHED_STATUS, BAOMU_ACTOR_SOURCE)
         enrichment_status = build_library_enrichment_status_text(
             avfan_enrichment_status,
             javtxt_enrichment_status,
             binghuo_enrichment_status,
+            baomu_enrichment_status,
         )
         return {
             'name': actor_name,
@@ -1770,13 +1882,15 @@ class VideoDatabase(
             'avfan_enrichment_status': avfan_enrichment_status,
             'javtxt_enrichment_status': javtxt_enrichment_status,
             'binghuo_enrichment_status': binghuo_enrichment_status,
-            'binghuo_person_id': row[8] or '',
-            'binghuo_birthday': row[9] or '',
-            'binghuo_age': row[10] or '',
-            'binghuo_height': row[11] or '',
-            'binghuo_bust': row[12] or '',
-            'binghuo_waist': row[13] or '',
-            'binghuo_hip': row[14] or '',
+            'baomu_enrichment_status': baomu_enrichment_status,
+            'binghuo_person_id': row[9] or '',
+            'binghuo_birthday': row[10] or '',
+            'binghuo_age': row[11] or '',
+            'binghuo_height': row[12] or '',
+            'binghuo_bust': row[13] or '',
+            'binghuo_waist': row[14] or '',
+            'binghuo_hip': row[15] or '',
+            'baomu_birthday': row[16] or '',
             'enrichment_status': enrichment_status or UNENRICHED_STATUS,
         }
 
@@ -1795,25 +1909,30 @@ class VideoDatabase(
             cursor = conn.cursor()
             cursor.execute(
                 f'''
-                SELECT a.name, a.birthday, a.age, a.matched,
+                SELECT a.name,
+                       effective_actor_birthday_sql(a.birthday, e.binghuo_birthday, e.baomu_birthday) AS merged_birthday,
+                       effective_actor_age_sql(a.age, e.binghuo_age, a.birthday, e.binghuo_birthday, e.baomu_birthday) AS merged_age,
+                       a.matched,
                        COALESCE(e.actor_id, '') AS actor_id,
                        COALESCE(e.avfan_enrichment_status, ?) AS avfan_enrichment_status,
                        COALESCE(e.javtxt_enrichment_status, ?) AS javtxt_enrichment_status,
                        COALESCE(e.binghuo_enrichment_status, ?) AS binghuo_enrichment_status,
+                       COALESCE(e.baomu_enrichment_status, ?) AS baomu_enrichment_status,
                        COALESCE(e.binghuo_person_id, '') AS binghuo_person_id,
                        COALESCE(e.binghuo_birthday, '') AS binghuo_birthday,
                        COALESCE(e.binghuo_age, '') AS binghuo_age,
                        COALESCE(e.binghuo_height, '') AS binghuo_height,
                        COALESCE(e.binghuo_bust, '') AS binghuo_bust,
                        COALESCE(e.binghuo_waist, '') AS binghuo_waist,
-                       COALESCE(e.binghuo_hip, '') AS binghuo_hip
+                       COALESCE(e.binghuo_hip, '') AS binghuo_hip,
+                       COALESCE(e.baomu_birthday, '') AS baomu_birthday
                 FROM actors a
                 LEFT JOIN actor_enrichments e ON e.actor_name = a.name
                 {where_sql}
                 ORDER BY {order_by_sql}
                 {limit_sql}
                 ''',
-                (UNENRICHED_STATUS, UNENRICHED_STATUS, UNENRICHED_STATUS, *query_parameters),
+                (UNENRICHED_STATUS, UNENRICHED_STATUS, UNENRICHED_STATUS, UNENRICHED_STATUS, *query_parameters),
             )
             rows = cursor.fetchall()
 
@@ -2075,9 +2194,9 @@ class VideoDatabase(
     def _refresh_actor_combined_status(self, cursor, actor_name):
         cursor.execute(
             '''
-            SELECT avfan_enrichment_status, javtxt_enrichment_status, binghuo_enrichment_status,
-                   avfan_last_error, javtxt_last_error, binghuo_last_error,
-                   avfan_last_enriched_at, javtxt_last_enriched_at, binghuo_last_enriched_at
+            SELECT avfan_enrichment_status, javtxt_enrichment_status, binghuo_enrichment_status, baomu_enrichment_status,
+                   avfan_last_error, javtxt_last_error, binghuo_last_error, baomu_last_error,
+                   avfan_last_enriched_at, javtxt_last_enriched_at, binghuo_last_enriched_at, baomu_last_enriched_at
             FROM actor_enrichments
             WHERE actor_name = ?
             ''',
@@ -2087,6 +2206,9 @@ class VideoDatabase(
             UNENRICHED_STATUS,
             UNENRICHED_STATUS,
             UNENRICHED_STATUS,
+            UNENRICHED_STATUS,
+            '',
+            '',
             '',
             '',
             '',
@@ -2098,16 +2220,19 @@ class VideoDatabase(
             avfan_status,
             javtxt_status,
             binghuo_status,
+            baomu_status,
             avfan_error,
             javtxt_error,
             binghuo_error,
+            baomu_error,
             avfan_at,
             javtxt_at,
             binghuo_at,
+            baomu_at,
         ) = row
-        combined_status = build_library_enrichment_status_text(avfan_status, javtxt_status, binghuo_status)
-        latest_error = str(binghuo_error or javtxt_error or avfan_error or '')
-        latest_at = str(binghuo_at or javtxt_at or avfan_at or '')
+        combined_status = build_library_enrichment_status_text(avfan_status, javtxt_status, binghuo_status, baomu_status)
+        latest_error = str(baomu_error or binghuo_error or javtxt_error or avfan_error or '')
+        latest_at = str(baomu_at or binghuo_at or javtxt_at or avfan_at or '')
         cursor.execute(
             '''
             UPDATE actor_enrichments
@@ -2270,6 +2395,7 @@ class VideoDatabase(
     def replace_code_prefix_movies(self, prefix, movies):
         prefix = str(prefix or '').strip().upper()
         normalized_movies = []
+        filter_settings = self._load_video_category_filter_settings()
         if movies:
             for movie in movies:
                 if not movie or not movie.get('code'):
@@ -2304,7 +2430,11 @@ class VideoDatabase(
                         javtxt_tags,
                         javtxt_release_date,
                         video_category,
-                    ) = self._normalize_web_movie_javtxt_fields(movie_with_preserved_actor, processed_record)
+                    ) = self._normalize_web_movie_javtxt_fields(
+                        movie_with_preserved_actor,
+                        processed_record,
+                        filter_settings=filter_settings,
+                    )
                     author, author_raw = self._normalize_web_movie_actor_fields(
                         movie_with_preserved_actor,
                         javtxt_movie_id=javtxt_movie_id,
@@ -2741,6 +2871,7 @@ class VideoDatabase(
     def replace_actor_movies(self, actor_name, movies):
         normalized_name = str(actor_name or '').strip()
         normalized_movies = []
+        filter_settings = self._load_video_category_filter_settings()
         if movies:
             for movie in movies:
                 if not movie or not movie.get('code'):
@@ -2775,7 +2906,11 @@ class VideoDatabase(
                         javtxt_tags,
                         javtxt_release_date,
                         video_category,
-                    ) = self._normalize_web_movie_javtxt_fields(movie_with_preserved_actor, processed_record)
+                    ) = self._normalize_web_movie_javtxt_fields(
+                        movie_with_preserved_actor,
+                        processed_record,
+                        filter_settings=filter_settings,
+                    )
                     author, author_raw = self._normalize_web_movie_actor_fields(
                         movie_with_preserved_actor,
                         javtxt_movie_id=javtxt_movie_id,
@@ -3429,6 +3564,7 @@ class VideoDatabase(
         return normalized_limit, normalized_offset
 
     def _fetch_processed_video_rows(self, where_sql='', parameters=None, order_by_sql='UPPER(code)', limit=None, offset=0):
+        self.refresh_video_categories_from_filter_rules()
         parameters = tuple(parameters or ())
         normalized_limit, normalized_offset = self._normalize_limit_offset(limit, offset)
         limit_sql = ''
@@ -4414,6 +4550,7 @@ class VideoDatabase(
         return len(normalized_actor_names)
 
     def list_videos_requiring_manual_category(self):
+        self.refresh_video_categories_from_filter_rules()
         with self._connect() as conn:
             cursor = conn.cursor()
             staged_rows = self._list_staged_video_categories(cursor)

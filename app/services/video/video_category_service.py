@@ -34,7 +34,7 @@ def normalize_video_category(value):
     return text if text in VIDEO_CATEGORY_OPTIONS else ''
 
 
-def detect_video_category(tags_text='', actors_text=''):
+def detect_video_category(tags_text='', actors_text='', force_single_or_co_star=False):
     normalized_tags = str(tags_text or '').strip()
     if any(keyword in normalized_tags for keyword in COLLECTION_TAG_KEYWORDS):
         return VIDEO_CATEGORY_COLLECTION
@@ -42,12 +42,14 @@ def detect_video_category(tags_text='', actors_text=''):
     actor_names = split_actor_names(actors_text)
     if len(actor_names) == 1:
         return VIDEO_CATEGORY_SINGLE
+    if force_single_or_co_star:
+        return VIDEO_CATEGORY_CO_STAR
 
     return ''
 
 
-def requires_manual_video_category(tags_text='', actors_text=''):
-    return not bool(detect_video_category(tags_text, actors_text))
+def requires_manual_video_category(tags_text='', actors_text='', force_single_or_co_star=False):
+    return not bool(detect_video_category(tags_text, actors_text, force_single_or_co_star=force_single_or_co_star))
 
 
 def count_video_actors(actors_text=''):
