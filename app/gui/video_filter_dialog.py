@@ -1,7 +1,10 @@
+from copy import deepcopy
+
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -9,6 +12,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -33,12 +37,22 @@ class KeywordRuleEditor(QWidget):
 
     def _init_ui(self, title, hint):
         layout = QVBoxLayout(self)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
 
-        group = QGroupBox(title)
-        group_layout = QVBoxLayout(group)
-        group_layout.addWidget(QLabel(hint))
+        self.group = QGroupBox(title)
+        self.group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.group.setMinimumWidth(0)
+        group_layout = QVBoxLayout(self.group)
+
+        self.hint_label = QLabel(hint)
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.hint_label.setMinimumWidth(0)
+        group_layout.addWidget(self.hint_label)
 
         self.keyword_list = QListWidget()
+        self.keyword_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.keyword_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         group_layout.addWidget(self.keyword_list)
 
@@ -54,7 +68,7 @@ class KeywordRuleEditor(QWidget):
         input_row.addWidget(self.btn_delete)
         group_layout.addLayout(input_row)
 
-        layout.addWidget(group)
+        layout.addWidget(self.group)
 
     def set_keywords(self, keywords):
         self.keyword_list.clear()
@@ -93,8 +107,9 @@ class KeywordRuleEditor(QWidget):
 class VideoFilterDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._saved_payload = None
         self.setWindowTitle(tr('video.filter.title'))
-        self.resize(760, 640)
+        self.resize(1680, 420)
         self._init_ui()
         self._load_settings()
 
@@ -123,15 +138,24 @@ class VideoFilterDialog(QDialog):
             self,
         )
 
-        layout.addWidget(self.code_editor)
-        layout.addWidget(self.title_editor)
-        layout.addWidget(self.tags_editor)
-        layout.addWidget(self.co_star_code_editor)
+        self.editor_grid = QGridLayout()
+        self.editor_grid.setHorizontalSpacing(16)
+        self.editor_grid.setVerticalSpacing(10)
+        self.editor_grid.addWidget(self.code_editor, 0, 0)
+        self.editor_grid.addWidget(self.title_editor, 0, 1)
+        self.editor_grid.addWidget(self.tags_editor, 0, 2)
+        self.editor_grid.addWidget(self.co_star_code_editor, 0, 3)
+        self.editor_grid.setColumnStretch(0, 1)
+        self.editor_grid.setColumnStretch(1, 1)
+        self.editor_grid.setColumnStretch(2, 1)
+        self.editor_grid.setColumnStretch(3, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.save_and_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        layout.addLayout(self.editor_grid)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.save_changes)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
 
     def _load_settings(self):
         settings = load_video_filter_settings()
@@ -139,6 +163,7 @@ class VideoFilterDialog(QDialog):
         self.title_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_TITLE))
         self.tags_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_JAVTXT_TAGS))
         self.co_star_code_editor.set_keywords(get_filter_keywords(settings, FILTER_FIELD_CO_STAR_CODE))
+        self._saved_payload = self.build_settings_payload()
 
     def build_settings_payload(self):
         return {
@@ -150,17 +175,49 @@ class VideoFilterDialog(QDialog):
             }
         }
 
-    def save_and_accept(self):
+    def has_unsaved_changes(self):
+        if self._saved_payload is None:
+            return False
+        return self.build_settings_payload() != self._saved_payload
+
+    def save_changes(self):
+        payload = self.build_settings_payload()
         try:
-            save_video_filter_settings(self.build_settings_payload())
+            save_video_filter_settings(payload)
         except Exception as exc:
             QMessageBox.critical(self, tr('common.save_failed'), tr('video.filter.save_failed', error=exc))
-            return
+            return False
 
+        self._saved_payload = deepcopy(payload)
         video_filter_event_bus.rules_saved.emit()
         QMessageBox.information(
             self,
             tr('video.filter.save_success'),
             tr('video.filter.save_success_message', path=VIDEO_FILTER_SETTINGS_FILE),
         )
-        self.accept()
+        return True
+
+    def _can_discard_unsaved_changes(self):
+        if not self.has_unsaved_changes():
+            return True
+        answer = QMessageBox.question(
+            self,
+            tr('video.filter.unsaved_changes_title'),
+            tr('video.filter.unsaved_changes_message'),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def reject(self):
+        if not self._can_discard_unsaved_changes():
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        if not self._can_discard_unsaved_changes():
+            event.ignore()
+            return
+        self.setResult(QDialog.Rejected)
+        self.hide()
+        event.accept()

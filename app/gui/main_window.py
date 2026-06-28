@@ -421,9 +421,6 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         self.btn_ladder_board = QPushButton(tr('main.ladder_board'))
         self.btn_ladder_board.clicked.connect(self.show_ladder_board_viewer)
 
-        self.btn_video_filter = QPushButton(tr('main.video_filter'))
-        self.btn_video_filter.clicked.connect(self.show_video_filter_dialog)
-
         self.btn_scan = QPushButton(tr('main.scan_local_videos'))
         self.btn_scan.clicked.connect(self.scan_files)
 
@@ -458,7 +455,6 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         top_button_row.addWidget(self.btn_canglangge)
         top_button_row.addWidget(self.btn_tianji)
         top_button_row.addWidget(self.btn_ladder_board)
-        top_button_row.addWidget(self.btn_video_filter)
         top_button_row.addStretch()
 
         bottom_button_row.addWidget(self.btn_scan)

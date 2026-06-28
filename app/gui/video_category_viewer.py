@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.i18n import tr
 from app.gui.video_category_update_events import video_category_update_event_bus
+from app.gui.video_filter_dialog import VideoFilterDialog
 from app.gui.video_filter_events import video_filter_event_bus
 from app.services.video import (
     MANUAL_CATEGORY_TIER_FIRST,
@@ -403,6 +404,7 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
             timeout=max(int(getattr(backend_client, 'timeout', 30) or 30), 90),
         )
         self.staged_count = 0
+        self._filter_dialog = None
         self._init_async_task_host()
         video_filter_event_bus.rules_saved.connect(self.on_filter_rules_saved)
         video_category_update_event_bus.categories_updated.connect(self.on_video_categories_updated)
@@ -501,6 +503,8 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         self.page_size_combo.setCurrentIndex(1)
         self.page_size_combo.currentIndexChanged.connect(self._on_page_size_changed)
 
+        self.btn_filter_rules = QPushButton(tr('main.video_filter'))
+        self.btn_filter_rules.clicked.connect(self.open_filter_dialog)
         self.btn_prev_page = QPushButton(tr('video.category.page_prev'))
         self.btn_prev_page.clicked.connect(self._go_previous_page)
         self.page_label = QLabel()
@@ -510,6 +514,8 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
         bottom_layout.addWidget(self.page_size_label)
         bottom_layout.addWidget(self.page_size_combo)
         bottom_layout.addStretch()
+        bottom_layout.addWidget(self.btn_filter_rules)
+        bottom_layout.addSpacing(12)
         bottom_layout.addWidget(self.btn_prev_page)
         bottom_layout.addWidget(self.page_label)
         bottom_layout.addWidget(self.btn_next_page)
@@ -527,6 +533,7 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
             self.btn_batch_co_star,
             self.btn_batch_collection,
             self.btn_sync,
+            self.btn_filter_rules,
             self.page_size_combo,
             self.btn_prev_page,
             self.btn_next_page,
@@ -554,6 +561,22 @@ class VideoCategoryViewerWindow(AsyncTaskHostMixin, QDialog):
             }
 
         self.start_async_task(task, self._on_sync_finished, tr('common.operation_failed'))
+
+    def open_filter_dialog(self):
+        if self._filter_dialog is None:
+            dialog = VideoFilterDialog(self)
+            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            if hasattr(dialog, 'destroyed'):
+                dialog.destroyed.connect(self._on_filter_dialog_destroyed)
+            self._filter_dialog = dialog
+        self._filter_dialog.show()
+        if hasattr(self._filter_dialog, 'raise_'):
+            self._filter_dialog.raise_()
+        if hasattr(self._filter_dialog, 'activateWindow'):
+            self._filter_dialog.activateWindow()
+
+    def _on_filter_dialog_destroyed(self, *_args):
+        self._filter_dialog = None
 
     def open_detail_url(self, target_url, source_label=''):
         target_url = str(target_url or '').strip()

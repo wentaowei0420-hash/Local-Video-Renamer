@@ -36,15 +36,25 @@ class _RefreshClientStub:
 
 
 class VideoCategoryViewerWindowTest(unittest.TestCase):
-    def test_filter_button_renders_in_bottom_toolbar_and_opens_dialog(self):
+    def test_filter_button_renders_in_bottom_toolbar_and_opens_dialog_modelessly(self):
         created = {}
 
         class FakeFilterDialog:
             def __init__(self, parent=None):
                 created['parent'] = parent
+                created['instance'] = self
 
-            def exec_(self):
-                created['opened'] = True
+            def setAttribute(self, *_args, **_kwargs):
+                created['set_attribute_called'] = True
+
+            def show(self):
+                created['shown'] = True
+
+            def raise_(self):
+                created['raised'] = True
+
+            def activateWindow(self):
+                created['activated'] = True
 
         with (
             patch('app.gui.video_category_viewer.BackendClient', _RefreshClientStub),
@@ -54,12 +64,16 @@ class VideoCategoryViewerWindowTest(unittest.TestCase):
             window = VideoCategoryViewerWindow(_BackendClientStub())
             try:
                 bottom_layout = window.layout().itemAt(2).layout()
-                self.assertIs(bottom_layout.itemAt(2).widget(), window.btn_filter_rules)
+                self.assertGreaterEqual(bottom_layout.indexOf(window.btn_filter_rules), 0)
 
                 window.btn_filter_rules.click()
 
                 self.assertIs(created.get('parent'), window)
-                self.assertTrue(created.get('opened'))
+                self.assertIs(window._filter_dialog, created.get('instance'))
+                self.assertTrue(created.get('set_attribute_called'))
+                self.assertTrue(created.get('shown'))
+                self.assertTrue(created.get('raised'))
+                self.assertTrue(created.get('activated'))
             finally:
                 window.hide()
                 window.deleteLater()
