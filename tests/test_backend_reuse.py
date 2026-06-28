@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.backend.service import BackendService
-from app.core.backend_protocol import BACKEND_API_REVISION
+from app.core.backend_protocol import BACKEND_API_REVISION, BACKEND_PROCESS_CODE_FINGERPRINT
 from app.core.enrichment_status import ENRICHED_STATUS
 from app.core.project_paths import PROJECT_ROOT
 from app.gui.i18n import tr
@@ -37,9 +37,13 @@ class BackendReuseDecisionTest(unittest.TestCase):
     def test_backend_revision_marks_code_prefix_analysis_change(self):
         self.assertIn('code-prefix-analysis', BACKEND_API_REVISION)
 
+    def test_backend_revision_marks_actor_detail_refresh_guard_change(self):
+        self.assertIn('actor-detail-refresh-guard', BACKEND_API_REVISION)
+
     def test_reuses_same_project_compatible_backend(self):
         health = {
             'backend_revision': BACKEND_API_REVISION,
+            'backend_code_fingerprint': BACKEND_PROCESS_CODE_FINGERPRINT,
             'project_root': str(PROJECT_ROOT),
             'backend_instance_token': 'existing-token',
         }
@@ -49,6 +53,7 @@ class BackendReuseDecisionTest(unittest.TestCase):
     def test_does_not_reuse_different_project_backend(self):
         health = {
             'backend_revision': BACKEND_API_REVISION,
+            'backend_code_fingerprint': BACKEND_PROCESS_CODE_FINGERPRINT,
             'project_root': str(PROJECT_ROOT.parent),
             'backend_instance_token': 'existing-token',
         }
@@ -58,6 +63,17 @@ class BackendReuseDecisionTest(unittest.TestCase):
     def test_does_not_reuse_incompatible_backend(self):
         health = {
             'backend_revision': 'old-revision',
+            'backend_code_fingerprint': BACKEND_PROCESS_CODE_FINGERPRINT,
+            'project_root': str(PROJECT_ROOT),
+            'backend_instance_token': 'existing-token',
+        }
+
+        self.assertFalse(VidNormApp.is_reusable_backend_instance(health))
+
+    def test_does_not_reuse_backend_when_code_fingerprint_differs(self):
+        health = {
+            'backend_revision': BACKEND_API_REVISION,
+            'backend_code_fingerprint': 'stale-fingerprint',
             'project_root': str(PROJECT_ROOT),
             'backend_instance_token': 'existing-token',
         }

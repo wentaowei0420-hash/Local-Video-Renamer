@@ -86,7 +86,11 @@ class CodePrefixLibrary:
         ]
         local_rows_by_prefix = {prefix: [] for prefix in prefixes}
         if prefixes and hasattr(self.database, 'list_local_videos_by_prefixes'):
-            for row in self.database.list_local_videos_by_prefixes(prefixes):
+            try:
+                local_source_rows = self.database.list_local_videos_by_prefixes(prefixes, refresh_categories=False)
+            except TypeError:
+                local_source_rows = self.database.list_local_videos_by_prefixes(prefixes)
+            for row in local_source_rows:
                 prefix = extract_code_prefix((row or {}).get('code', ''))
                 if prefix in local_rows_by_prefix:
                     local_rows_by_prefix.setdefault(prefix, []).append(dict(row or {}))

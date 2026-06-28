@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
-from app.core.backend_protocol import BACKEND_API_REVISION
+from app.core.backend_protocol import BACKEND_API_REVISION, BACKEND_PROCESS_CODE_FINGERPRINT
 from app.core.combo_enrichment import get_combo_label, normalize_combo_key
 from app.core.enrichment_targets import ACTOR_LIBRARY_TARGET, VIDEO_LIBRARY_TARGET
 from app.core.javtxt_video_state import is_javtxt_eligible_movie
@@ -94,6 +94,7 @@ class BackendService:
         return {
             'ok': True,
             'backend_revision': BACKEND_API_REVISION,
+            'backend_code_fingerprint': BACKEND_PROCESS_CODE_FINGERPRINT,
             'backend_instance_token': self.instance_token,
             'backend_process_id': self.process_id,
             'project_root': str(self.base_dir),
@@ -545,7 +546,10 @@ class BackendService:
 
         local_rows = []
         if hasattr(self.db, 'list_local_videos_by_actor_names'):
-            local_rows = list(self.db.list_local_videos_by_actor_names(actor_names))
+            try:
+                local_rows = list(self.db.list_local_videos_by_actor_names(actor_names, refresh_categories=False))
+            except TypeError:
+                local_rows = list(self.db.list_local_videos_by_actor_names(actor_names))
         web_movies_by_actor = {}
         if hasattr(self.db, 'list_actor_movies_by_names'):
             web_movies_by_actor = self.db.list_actor_movies_by_names(actor_names)

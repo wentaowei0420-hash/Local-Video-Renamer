@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
 )
 
 from app.backend.client import BackendClient
-from app.core.backend_protocol import BACKEND_API_REVISION
+from app.core.backend_protocol import BACKEND_API_REVISION, build_backend_code_fingerprint
 from app.core.local_video_labels import (
     ENRICHMENT_REQUIRED_STATUS,
     IMPORT_REQUIRED_STATUS,
@@ -249,7 +249,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
             return None
 
     def is_backend_compatible(self, health):
-        return bool(health) and str(health.get('backend_revision') or '') == BACKEND_API_REVISION
+        return bool(health) and self._is_matching_backend_code(health)
 
     def is_expected_backend_instance(self, health):
         return (
@@ -261,12 +261,20 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
     def is_reusable_backend_instance(health):
         if not health:
             return False
-        if str((health or {}).get('backend_revision') or '').strip() != BACKEND_API_REVISION:
+        if not VidNormApp._is_matching_backend_code(health):
             return False
         existing_project_root = str((health or {}).get('project_root') or '').strip()
         if not existing_project_root:
             return False
         return Path(existing_project_root).resolve() == PROJECT_ROOT.resolve()
+
+    @staticmethod
+    def _is_matching_backend_code(health):
+        if str((health or {}).get('backend_revision') or '').strip() != BACKEND_API_REVISION:
+            return False
+        return str((health or {}).get('backend_code_fingerprint') or '').strip() == build_backend_code_fingerprint(
+            PROJECT_ROOT
+        )
 
     def stop_backend_on_port(self, health=None):
         if self.backend_process and self.backend_process.poll() is None:

@@ -3563,8 +3563,17 @@ class VideoDatabase(
         normalized_offset = max(int(offset or 0), 0)
         return normalized_limit, normalized_offset
 
-    def _fetch_processed_video_rows(self, where_sql='', parameters=None, order_by_sql='UPPER(code)', limit=None, offset=0):
-        self.refresh_video_categories_from_filter_rules()
+    def _fetch_processed_video_rows(
+        self,
+        where_sql='',
+        parameters=None,
+        order_by_sql='UPPER(code)',
+        limit=None,
+        offset=0,
+        refresh_categories=True,
+    ):
+        if refresh_categories:
+            self.refresh_video_categories_from_filter_rules()
         parameters = tuple(parameters or ())
         normalized_limit, normalized_offset = self._normalize_limit_offset(limit, offset)
         limit_sql = ''
@@ -3616,8 +3625,8 @@ class VideoDatabase(
             row = cursor.fetchone()
         return int((row or [0])[0] or 0)
 
-    def list_local_videos_by_actor_name(self, actor_name):
-        rows = self.list_local_videos_by_actor_names([actor_name])
+    def list_local_videos_by_actor_name(self, actor_name, refresh_categories=True):
+        rows = self.list_local_videos_by_actor_names([actor_name], refresh_categories=refresh_categories)
         normalized_name = str(actor_name or '').strip()
         if not normalized_name:
             return []
@@ -3627,7 +3636,7 @@ class VideoDatabase(
             if normalized_name in split_actor_names(row.get('author', ''))
         ]
 
-    def list_local_videos_by_actor_names(self, actor_names):
+    def list_local_videos_by_actor_names(self, actor_names, refresh_categories=True):
         normalized_names = []
         seen = set()
         for actor_name in actor_names or []:
@@ -3642,6 +3651,7 @@ class VideoDatabase(
         rows = self._fetch_processed_video_rows(
             'WHERE ' + ' OR '.join('author LIKE ?' for _ in normalized_names),
             [f'%{actor_name}%' for actor_name in normalized_names],
+            refresh_categories=refresh_categories,
         )
         target_names = set(normalized_names)
         return [
@@ -3650,8 +3660,8 @@ class VideoDatabase(
             if target_names.intersection(split_actor_names(row.get('author', '')))
         ]
 
-    def list_local_videos_by_prefix(self, prefix):
-        rows = self.list_local_videos_by_prefixes([prefix])
+    def list_local_videos_by_prefix(self, prefix, refresh_categories=True):
+        rows = self.list_local_videos_by_prefixes([prefix], refresh_categories=refresh_categories)
         normalized_prefix = str(prefix or '').strip().upper()
         if not normalized_prefix:
             return []
@@ -3661,7 +3671,7 @@ class VideoDatabase(
             if extract_code_prefix(row.get('code', '')) == normalized_prefix
         ]
 
-    def list_local_videos_by_prefixes(self, prefixes):
+    def list_local_videos_by_prefixes(self, prefixes, refresh_categories=True):
         normalized_prefixes = []
         seen = set()
         for prefix in prefixes or []:
@@ -3676,6 +3686,7 @@ class VideoDatabase(
         rows = self._fetch_processed_video_rows(
             'WHERE ' + ' OR '.join('code LIKE ?' for _ in normalized_prefixes),
             [f'{prefix}%' for prefix in normalized_prefixes],
+            refresh_categories=refresh_categories,
         )
         target_prefixes = set(normalized_prefixes)
         return [

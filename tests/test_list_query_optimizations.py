@@ -137,11 +137,15 @@ class BackendVideoListOptimizationTest(unittest.TestCase):
 class TargetedDetailQueryTest(unittest.TestCase):
     def test_actor_detail_prefers_targeted_local_query(self):
         class FakeDatabase:
+            def __init__(self):
+                self.refresh_categories = None
+
             def list_actors(self, search_text=''):
                 return [{'name': 'Actor A', 'birthday': '', 'age': '', 'matched': True, 'actor_id': ''}]
 
-            def list_local_videos_by_actor_name(self, actor_name):
+            def list_local_videos_by_actor_name(self, actor_name, refresh_categories=True):
                 self.actor_name = actor_name
+                self.refresh_categories = refresh_categories
                 return [{'code': 'AAA-001', 'title': 'Local', 'author': 'Actor A'}]
 
             def list_videos(self):
@@ -159,17 +163,23 @@ class TargetedDetailQueryTest(unittest.TestCase):
             def get_ladder_entry(self, board_key, entity_type, entity_name):
                 return {}
 
-        detail = ActorDetailLibrary(FakeDatabase()).get_actor_detail('Actor A')
+        database = FakeDatabase()
+        detail = ActorDetailLibrary(database).get_actor_detail('Actor A')
 
         self.assertEqual([row['code'] for row in detail['local_videos']], ['AAA-001'])
+        self.assertFalse(database.refresh_categories)
 
     def test_code_prefix_detail_prefers_targeted_local_query(self):
         class FakeDatabase:
+            def __init__(self):
+                self.refresh_categories = None
+
             def get_code_prefix_enrichment_record(self, prefix):
                 return {}
 
-            def list_local_videos_by_prefix(self, prefix):
+            def list_local_videos_by_prefix(self, prefix, refresh_categories=True):
                 self.prefix = prefix
+                self.refresh_categories = refresh_categories
                 return [{'code': 'NEM-001', 'title': 'Local', 'author': 'Actor A'}]
 
             def list_videos(self):
@@ -184,9 +194,11 @@ class TargetedDetailQueryTest(unittest.TestCase):
             def get_ladder_entry(self, board_key, entity_type, entity_name):
                 return {}
 
-        detail = CodePrefixDetailLibrary(FakeDatabase()).get_prefix_detail('NEM')
+        database = FakeDatabase()
+        detail = CodePrefixDetailLibrary(database).get_prefix_detail('NEM')
 
         self.assertEqual([row['code'] for row in detail['local_videos']], ['NEM-001'])
+        self.assertFalse(database.refresh_categories)
 
 
 class LibraryListMetadataTest(unittest.TestCase):
@@ -290,6 +302,46 @@ class LibraryListMetadataTest(unittest.TestCase):
         self.assertEqual(result['offset'], 160)
         self.assertEqual(result['limit'], 80)
 
+    def test_list_actors_skips_category_refresh_for_targeted_local_video_query(self):
+        class FakeDatabase:
+            def __init__(self):
+                self.refresh_categories = None
+
+            def list_actors(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
+                return [
+                    {
+                        'name': 'ActorA',
+                        'actor_id': '1',
+                        'birthday': '',
+                        'age': '',
+                        'avfan_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'binghuo_enrichment_status': ENRICHED_STATUS,
+                    }
+                ]
+
+            def count_actors(self, search_text=''):
+                return 1
+
+            def list_local_videos_by_actor_names(self, actor_names, refresh_categories=True):
+                self.refresh_categories = refresh_categories
+                return []
+
+            def list_actor_movies_by_names(self, actor_names):
+                return {}
+
+            def list_ladder_entries(self, board_key=None, entity_type=None):
+                return []
+
+        service = BackendService.__new__(BackendService)
+        service.db = FakeDatabase()
+        service.video_filter_service = _PassThroughFilterService()
+        service.ensure_database_loaded = lambda: None
+
+        BackendService.list_actors(service)
+
+        self.assertFalse(service.db.refresh_categories)
+
     def test_code_prefix_list_includes_raw_status_and_update_status(self):
         recent_date = (date.today() - timedelta(days=120)).isoformat()
 
@@ -330,6 +382,42 @@ class LibraryListMetadataTest(unittest.TestCase):
         self.assertEqual(rows[0]['avfan_enrichment_status'], ENRICHED_STATUS)
         self.assertEqual(rows[0]['javtxt_enrichment_status'], FAILED_STATUS)
         self.assertEqual(rows[0]['update_status'], 'active')
+
+    def test_code_prefix_list_skips_category_refresh_for_targeted_local_video_query(self):
+        class FakeDatabase:
+            def __init__(self):
+                self.refresh_categories = None
+
+            def list_code_prefix_summaries(self, search_text='', sort_field='prefix', sort_order='asc', limit=None, offset=0):
+                return [
+                    {
+                        'prefix': 'NEM',
+                        'video_count': 1,
+                        'avfan_enrichment_status': ENRICHED_STATUS,
+                        'javtxt_enrichment_status': ENRICHED_STATUS,
+                        'avfan_total_pages': 0,
+                        'avfan_total_videos': 0,
+                        'earliest_release_date': '',
+                        'latest_release_date': '',
+                        'last_enriched_at': '',
+                    }
+                ]
+
+            def list_local_videos_by_prefixes(self, prefixes, refresh_categories=True):
+                self.refresh_categories = refresh_categories
+                return []
+
+            def list_code_prefix_movies_by_prefixes(self, prefixes):
+                return {'NEM': []}
+
+            def list_ladder_entries(self, board_key=None, entity_type=None):
+                return []
+
+        library = CodePrefixLibrary(FakeDatabase(), _PassThroughFilterService())
+
+        library.list_prefixes()
+
+        self.assertFalse(library.database.refresh_categories)
 
     def test_list_code_prefixes_passes_sort_and_pagination_to_library(self):
         class FakeCodePrefixLibrary:

@@ -69,8 +69,12 @@ class CodePrefixDetailLibrary:
 
     def _find_local_prefix_videos(self, prefix, medal_maps=None):
         if hasattr(self.database, 'list_local_videos_by_prefix'):
+            try:
+                local_rows = self.database.list_local_videos_by_prefix(prefix, refresh_categories=False)
+            except TypeError:
+                local_rows = self.database.list_local_videos_by_prefix(prefix)
             return self._enrich_rows(
-                self.database.list_local_videos_by_prefix(prefix),
+                local_rows,
                 medal_maps=medal_maps,
             )
         matched = []

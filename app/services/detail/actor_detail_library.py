@@ -103,8 +103,12 @@ class ActorDetailLibrary:
 
     def _find_local_actor_videos(self, actor_name, medal_maps=None):
         if hasattr(self.database, 'list_local_videos_by_actor_name'):
+            try:
+                local_rows = self.database.list_local_videos_by_actor_name(actor_name, refresh_categories=False)
+            except TypeError:
+                local_rows = self.database.list_local_videos_by_actor_name(actor_name)
             return self._enrich_rows(
-                self.database.list_local_videos_by_actor_name(actor_name),
+                local_rows,
                 medal_maps=medal_maps,
             )
         matched = []
