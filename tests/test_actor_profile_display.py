@@ -258,6 +258,7 @@ class ActorProfileDisplayTest(unittest.TestCase):
                     'binghuo_person_id': 'binghuo-77',
                     'binghuo_height': '168',
                     'binghuo_bust': '86',
+                    'binghuo_cup': 'F',
                     'binghuo_waist': '59',
                     'binghuo_hip': '88',
                     'binghuo_enrichment_status': ENRICHED_STATUS,
@@ -280,6 +281,7 @@ class ActorProfileDisplayTest(unittest.TestCase):
         self.assertEqual(detail['binghuo_person_id'], 'binghuo-77')
         self.assertEqual(detail['binghuo_height'], '168')
         self.assertEqual(detail['binghuo_bust'], '86')
+        self.assertEqual(detail['binghuo_cup'], 'F')
         self.assertEqual(detail['binghuo_waist'], '59')
         self.assertEqual(detail['binghuo_hip'], '88')
         self.assertEqual(detail['appearance_code_count'], 3)
@@ -314,11 +316,13 @@ class ActorProfileDisplayTest(unittest.TestCase):
                     'binghuo_birthday': '',
                     'binghuo_height': '',
                     'binghuo_bust': '',
+                    'binghuo_cup': '',
                     'binghuo_waist': '',
                     'binghuo_hip': '',
                     'baomu_birthday': '1984-05-20',
                     'baomu_height': '171',
                     'baomu_bust': '101',
+                    'baomu_cup': 'G',
                     'baomu_waist': '63',
                     'baomu_hip': '93',
                     'binghuo_enrichment_status': ENRICHED_STATUS,
@@ -339,6 +343,7 @@ class ActorProfileDisplayTest(unittest.TestCase):
         self.assertEqual(detail['age'], '42')
         self.assertEqual(detail['binghuo_height'], '171')
         self.assertEqual(detail['binghuo_bust'], '101')
+        self.assertEqual(detail['binghuo_cup'], 'G')
         self.assertEqual(detail['binghuo_waist'], '63')
         self.assertEqual(detail['binghuo_hip'], '93')
         self.assertEqual(detail['baomu_birthday'], '1984-05-20')

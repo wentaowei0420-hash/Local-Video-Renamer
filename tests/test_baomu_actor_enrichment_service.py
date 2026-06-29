@@ -96,6 +96,8 @@ class ActorBaomuEnrichmentServiceTest(unittest.TestCase):
                     "birthday": "1984-05-20",
                     "height": "171",
                     "bust": "101",
+                    "cup": "G",
+                    "measurements_raw": "breast=101cm; waist=63cm; hip=93cm; cup=G",
                     "waist": "63",
                     "hip": "93",
                 }
@@ -115,6 +117,8 @@ class ActorBaomuEnrichmentServiceTest(unittest.TestCase):
         self.assertEqual(record["baomu_birthday"], "1984-05-20")
         self.assertEqual(record["baomu_height"], "171")
         self.assertEqual(record["baomu_bust"], "101")
+        self.assertEqual(record["baomu_cup"], "G")
+        self.assertEqual(record["baomu_measurements_raw"], "breast=101cm; waist=63cm; hip=93cm; cup=G")
         self.assertEqual(record["baomu_waist"], "63")
         self.assertEqual(record["baomu_hip"], "93")
 

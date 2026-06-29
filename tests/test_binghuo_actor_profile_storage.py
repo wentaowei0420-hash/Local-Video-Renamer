@@ -34,6 +34,8 @@ class BinghuoActorProfileStorageTest(unittest.TestCase):
             age='22',
             height='172',
             bust='85',
+            cup='E',
+            measurements_raw='B:85(E) W:60 H:88',
             waist='60',
             hip='88',
         )
@@ -47,6 +49,8 @@ class BinghuoActorProfileStorageTest(unittest.TestCase):
         self.assertEqual(record['binghuo_age'], '22')
         self.assertEqual(record['binghuo_height'], '172')
         self.assertEqual(record['binghuo_bust'], '85')
+        self.assertEqual(record['binghuo_cup'], 'E')
+        self.assertEqual(record['binghuo_measurements_raw'], 'B:85(E) W:60 H:88')
         self.assertEqual(record['binghuo_waist'], '60')
         self.assertEqual(record['binghuo_hip'], '88')
         self.assertEqual(actor_row['birthday'], '2003/9/4')

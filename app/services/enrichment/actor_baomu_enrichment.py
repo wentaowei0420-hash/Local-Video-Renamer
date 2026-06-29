@@ -143,6 +143,8 @@ class ActorBaomuEnrichmentService:
             birthday=str((profile or {}).get('birthday', '') or '').strip(),
             height=str((profile or {}).get('height', '') or '').strip(),
             bust=str((profile or {}).get('bust', '') or '').strip(),
+            cup=str((profile or {}).get('cup', '') or '').strip().upper(),
+            measurements_raw=str((profile or {}).get('measurements_raw', '') or '').strip(),
             waist=str((profile or {}).get('waist', '') or '').strip(),
             hip=str((profile or {}).get('hip', '') or '').strip(),
         )
@@ -152,6 +154,8 @@ class ActorBaomuEnrichmentService:
             'birthday': str((profile or {}).get('birthday', '') or '').strip(),
             'height': str((profile or {}).get('height', '') or '').strip(),
             'bust': str((profile or {}).get('bust', '') or '').strip(),
+            'cup': str((profile or {}).get('cup', '') or '').strip().upper(),
+            'measurements_raw': str((profile or {}).get('measurements_raw', '') or '').strip(),
             'waist': str((profile or {}).get('waist', '') or '').strip(),
             'hip': str((profile or {}).get('hip', '') or '').strip(),
         }

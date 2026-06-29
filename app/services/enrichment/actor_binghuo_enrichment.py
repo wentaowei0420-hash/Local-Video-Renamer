@@ -237,6 +237,8 @@ class ActorBinghuoEnrichmentService:
         age = str((profile or {}).get('age', '') or '').strip()
         height = str((profile or {}).get('height', '') or '').strip()
         bust = str((profile or {}).get('bust', '') or '').strip()
+        cup = str((profile or {}).get('cup', '') or '').strip().upper()
+        measurements_raw = str((profile or {}).get('measurements_raw', '') or '').strip()
         waist = str((profile or {}).get('waist', '') or '').strip()
         hip = str((profile or {}).get('hip', '') or '').strip()
         resolved_person_id = (
@@ -254,6 +256,8 @@ class ActorBinghuoEnrichmentService:
             age=age,
             height=height,
             bust=bust,
+            cup=cup,
+            measurements_raw=measurements_raw,
             waist=waist,
             hip=hip,
             error='',
@@ -266,6 +270,8 @@ class ActorBinghuoEnrichmentService:
             'age': age,
             'height': height,
             'bust': bust,
+            'cup': cup,
+            'measurements_raw': measurements_raw,
             'waist': waist,
             'hip': hip,
         }

@@ -23,12 +23,19 @@ class _BackendStub:
         return {
             "analysis": {
                 "distribution_rows": [
-                    {"label": "70\u5c81", "count": 2, "bucket_value": 70},
-                    {"label": "69\u5c81", "count": 1, "bucket_value": 69},
+                    {"label": f"{70 - index}\u5c81", "count": index + 1, "bucket_value": 70 - index}
+                    for index in range(12)
                 ],
                 "ranking_rows": [
-                    {"actor_name": "Actor A", "display_value": "70\u5c81", "numeric_value": 70},
+                    {
+                        "actor_name": f"Actor {index + 1}",
+                        "display_value": f"{70 - index}\u5c81",
+                        "numeric_value": 70 - index,
+                    }
+                    for index in range(7)
                 ],
+                "distribution_items_per_line": 10,
+                "ranking_items_per_line": 6,
             },
             "refreshed_at": "2026-06-29 22:00:00",
         }
@@ -46,7 +53,7 @@ class _BackendStub:
 
 
 class DataCenterAnalysisViewerTest(unittest.TestCase):
-    def test_actor_metric_distribution_renders_clickable_bucket_buttons(self):
+    def test_actor_metric_distribution_renders_clickable_bucket_buttons_in_ten_columns(self):
         backend = _BackendStub()
         metric_config = {"key": "age", "label_key": "data_center.analysis.age"}
 
@@ -54,7 +61,28 @@ class DataCenterAnalysisViewerTest(unittest.TestCase):
             window = MetricAnalysisWindow(backend, "actor", metric_config)
             try:
                 button_texts = [button.text() for button in window.distribution_buttons]
-                self.assertEqual(button_texts, ["70\u5c81: 2", "69\u5c81: 1"])
+                self.assertEqual(len(button_texts), 12)
+                self.assertEqual(button_texts[0], "70\u5c81: 1")
+                self.assertEqual(button_texts[10], "60\u5c81: 11")
+                self.assertIsNotNone(window.distribution_button_layout.itemAtPosition(0, 9))
+                self.assertIsNotNone(window.distribution_button_layout.itemAtPosition(1, 0))
+            finally:
+                window.hide()
+                window.deleteLater()
+
+    def test_actor_metric_ranking_renders_six_columns_with_aligned_cells(self):
+        backend = _BackendStub()
+        metric_config = {"key": "age", "label_key": "data_center.analysis.age"}
+
+        with patch.object(AsyncTaskHostMixin, "start_async_task", _run_sync_async_task):
+            window = MetricAnalysisWindow(backend, "actor", metric_config)
+            try:
+                self.assertEqual(len(window.ranking_item_widgets), 7)
+                self.assertIsNotNone(window.ranking_grid_layout.itemAtPosition(0, 5))
+                self.assertIsNotNone(window.ranking_grid_layout.itemAtPosition(1, 0))
+
+                widths = [widget.minimumWidth() for widget in window.ranking_item_widgets]
+                self.assertTrue(all(width == widths[0] for width in widths))
             finally:
                 window.hide()
                 window.deleteLater()

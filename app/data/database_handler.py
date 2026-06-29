@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from threading import Lock
 
 from app.core.enrichment_status import (
     ENRICHED_STATUS,
@@ -92,6 +93,8 @@ class VideoDatabase(
 ):
     def __init__(self, db_path=None):
         self.db_path = Path(db_path) if db_path else DATABASE_FILE
+        self._startup_maintenance_completed = False
+        self._startup_maintenance_lock = Lock()
         self._init_db()
 
     @contextmanager
@@ -315,6 +318,8 @@ class VideoDatabase(
             self._ensure_column(cursor, 'actor_enrichments', 'binghuo_age', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'binghuo_height', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'binghuo_bust', 'TEXT DEFAULT ""')
+            self._ensure_column(cursor, 'actor_enrichments', 'binghuo_cup', 'TEXT DEFAULT ""')
+            self._ensure_column(cursor, 'actor_enrichments', 'binghuo_measurements_raw', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'binghuo_waist', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'binghuo_hip', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_enrichment_status', 'TEXT DEFAULT ""')
@@ -323,6 +328,8 @@ class VideoDatabase(
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_birthday', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_height', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_bust', 'TEXT DEFAULT ""')
+            self._ensure_column(cursor, 'actor_enrichments', 'baomu_cup', 'TEXT DEFAULT ""')
+            self._ensure_column(cursor, 'actor_enrichments', 'baomu_measurements_raw', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_waist', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_enrichments', 'baomu_hip', 'TEXT DEFAULT ""')
             self._ensure_column(cursor, 'actor_movies', 'title', 'TEXT')
@@ -362,157 +369,171 @@ class VideoDatabase(
                 'avfan_enrichment_status, javtxt_enrichment_status, prefix',
             )
             self._ensure_index(cursor, 'idx_ladder_entries_board', 'ladder_entries', 'board_key, entity_type, tier, entity_name')
-            cursor.execute(
-                '''
-                UPDATE code_prefix_enrichments
-                SET avfan_enrichment_status = COALESCE(NULLIF(avfan_enrichment_status, ''), COALESCE(NULLIF(enrichment_status, ''), ?)),
-                    avfan_last_error = COALESCE(NULLIF(avfan_last_error, ''), COALESCE(NULLIF(last_error, ''), '')),
-                    avfan_last_enriched_at = COALESCE(NULLIF(avfan_last_enriched_at, ''), last_enriched_at),
-                    javtxt_enrichment_status = COALESCE(NULLIF(javtxt_enrichment_status, ''), ?),
-                    javtxt_total_videos = COALESCE(javtxt_total_videos, 0)
-                ''',
-                (UNENRICHED_STATUS, UNENRICHED_STATUS),
-            )
-            cursor.execute(
-                '''
-                UPDATE actor_enrichments
-                SET avfan_enrichment_status = COALESCE(NULLIF(avfan_enrichment_status, ''), COALESCE(NULLIF(enrichment_status, ''), ?)),
-                    avfan_last_error = COALESCE(NULLIF(avfan_last_error, ''), COALESCE(NULLIF(last_error, ''), '')),
-                    avfan_last_enriched_at = COALESCE(NULLIF(avfan_last_enriched_at, ''), last_enriched_at),
-                    javtxt_enrichment_status = COALESCE(NULLIF(javtxt_enrichment_status, ''), ?),
-                    javtxt_total_videos = COALESCE(javtxt_total_videos, 0)
-                ''',
-                (UNENRICHED_STATUS, UNENRICHED_STATUS),
-            )
-            cursor.execute(
-                '''
-                UPDATE code_prefix_movies
-                SET javtxt_enrichment_status = COALESCE(
-                        NULLIF(javtxt_enrichment_status, ''),
-                        (
-                            SELECT COALESCE(NULLIF(p.javtxt_enrichment_status, ''), ?)
-                            FROM processed_videos p
-                            WHERE p.code = code_prefix_movies.code
-                        ),
-                        ?
-                    ),
-                    javtxt_movie_id = COALESCE(
-                        NULLIF(javtxt_movie_id, ''),
-                        (
-                            SELECT p.javtxt_movie_id
-                            FROM processed_videos p
-                            WHERE p.code = code_prefix_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_url = COALESCE(
-                        NULLIF(javtxt_url, ''),
-                        (
-                            SELECT p.javtxt_url
-                            FROM processed_videos p
-                            WHERE p.code = code_prefix_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_tags = COALESCE(
-                        NULLIF(javtxt_tags, ''),
-                        (
-                            SELECT p.javtxt_tags
-                            FROM processed_videos p
-                            WHERE p.code = code_prefix_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_release_date = COALESCE(
-                        NULLIF(javtxt_release_date, ''),
-                        (
-                            SELECT p.javtxt_release_date
-                            FROM processed_videos p
-                            WHERE p.code = code_prefix_movies.code
-                        ),
-                        ''
-                    ),
-                    author_raw = COALESCE(NULLIF(author_raw, ''), NULLIF(author, ''), '')
-                ''',
-                (UNENRICHED_STATUS, UNENRICHED_STATUS),
-            )
-            cursor.execute(
-                '''
-                UPDATE actor_movies
-                SET javtxt_enrichment_status = COALESCE(
-                        NULLIF(javtxt_enrichment_status, ''),
-                        (
-                            SELECT COALESCE(NULLIF(p.javtxt_enrichment_status, ''), ?)
-                            FROM processed_videos p
-                            WHERE p.code = actor_movies.code
-                        ),
-                        ?
-                    ),
-                    javtxt_movie_id = COALESCE(
-                        NULLIF(javtxt_movie_id, ''),
-                        (
-                            SELECT p.javtxt_movie_id
-                            FROM processed_videos p
-                            WHERE p.code = actor_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_url = COALESCE(
-                        NULLIF(javtxt_url, ''),
-                        (
-                            SELECT p.javtxt_url
-                            FROM processed_videos p
-                            WHERE p.code = actor_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_tags = COALESCE(
-                        NULLIF(javtxt_tags, ''),
-                        (
-                            SELECT p.javtxt_tags
-                            FROM processed_videos p
-                            WHERE p.code = actor_movies.code
-                        ),
-                        ''
-                    ),
-                    javtxt_release_date = COALESCE(
-                        NULLIF(javtxt_release_date, ''),
-                        (
-                            SELECT p.javtxt_release_date
-                            FROM processed_videos p
-                            WHERE p.code = actor_movies.code
-                        ),
-                        ''
-                    ),
-                    author_raw = COALESCE(NULLIF(author_raw, ''), NULLIF(author, ''), '')
-                ''',
-                (UNENRICHED_STATUS, UNENRICHED_STATUS),
-            )
-            cursor.execute(
-                '''
-                UPDATE processed_videos
-                SET javtxt_actors_raw = COALESCE(NULLIF(javtxt_actors_raw, ''), NULLIF(javtxt_actors, ''), '')
-                '''
-            )
-            cursor.executemany(
-                'DELETE FROM actors WHERE lower(name) = ?',
-                [(name,) for name in IGNORED_ACTOR_NAMES],
-            )
-            self._backfill_video_categories(cursor)
-            self._clear_processed_video_javtxt_state_without_detail_reference(cursor)
-            self._clear_ineligible_processed_video_javtxt_state(cursor)
-            self._backfill_web_movie_categories(cursor, 'code_prefix_movies')
-            self._backfill_web_movie_categories(cursor, 'actor_movies')
-            self._normalize_existing_web_movie_codes(cursor)
-            self._propagate_existing_web_movie_javtxt_state(cursor)
-            self._clear_web_movie_javtxt_state_without_detail_reference(cursor, 'code_prefix_movies')
-            self._clear_web_movie_javtxt_state_without_detail_reference(cursor, 'actor_movies')
-            self._clear_legacy_web_movie_javtxt_state_without_release_date(cursor, 'code_prefix_movies')
-            self._clear_legacy_web_movie_javtxt_state_without_release_date(cursor, 'actor_movies')
-            self._clear_ineligible_web_movie_javtxt_state(cursor, 'code_prefix_movies')
-            self._clear_ineligible_web_movie_javtxt_state(cursor, 'actor_movies')
-            self._sanitize_legacy_actor_source_status_columns(cursor)
             conn.commit()
+
+    def ensure_startup_maintenance(self):
+        if self._startup_maintenance_completed:
+            return
+        with self._startup_maintenance_lock:
+            if self._startup_maintenance_completed:
+                return
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                self._run_startup_maintenance(cursor)
+                conn.commit()
+            self._startup_maintenance_completed = True
+
+    def _run_startup_maintenance(self, cursor):
+        cursor.execute(
+            '''
+            UPDATE code_prefix_enrichments
+            SET avfan_enrichment_status = COALESCE(NULLIF(avfan_enrichment_status, ''), COALESCE(NULLIF(enrichment_status, ''), ?)),
+                avfan_last_error = COALESCE(NULLIF(avfan_last_error, ''), COALESCE(NULLIF(last_error, ''), '')),
+                avfan_last_enriched_at = COALESCE(NULLIF(avfan_last_enriched_at, ''), last_enriched_at),
+                javtxt_enrichment_status = COALESCE(NULLIF(javtxt_enrichment_status, ''), ?),
+                javtxt_total_videos = COALESCE(javtxt_total_videos, 0)
+            ''',
+            (UNENRICHED_STATUS, UNENRICHED_STATUS),
+        )
+        cursor.execute(
+            '''
+            UPDATE actor_enrichments
+            SET avfan_enrichment_status = COALESCE(NULLIF(avfan_enrichment_status, ''), COALESCE(NULLIF(enrichment_status, ''), ?)),
+                avfan_last_error = COALESCE(NULLIF(avfan_last_error, ''), COALESCE(NULLIF(last_error, ''), '')),
+                avfan_last_enriched_at = COALESCE(NULLIF(avfan_last_enriched_at, ''), last_enriched_at),
+                javtxt_enrichment_status = COALESCE(NULLIF(javtxt_enrichment_status, ''), ?),
+                javtxt_total_videos = COALESCE(javtxt_total_videos, 0)
+            ''',
+            (UNENRICHED_STATUS, UNENRICHED_STATUS),
+        )
+        cursor.execute(
+            '''
+            UPDATE code_prefix_movies
+            SET javtxt_enrichment_status = COALESCE(
+                    NULLIF(javtxt_enrichment_status, ''),
+                    (
+                        SELECT COALESCE(NULLIF(p.javtxt_enrichment_status, ''), ?)
+                        FROM processed_videos p
+                        WHERE p.code = code_prefix_movies.code
+                    ),
+                    ?
+                ),
+                javtxt_movie_id = COALESCE(
+                    NULLIF(javtxt_movie_id, ''),
+                    (
+                        SELECT p.javtxt_movie_id
+                        FROM processed_videos p
+                        WHERE p.code = code_prefix_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_url = COALESCE(
+                    NULLIF(javtxt_url, ''),
+                    (
+                        SELECT p.javtxt_url
+                        FROM processed_videos p
+                        WHERE p.code = code_prefix_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_tags = COALESCE(
+                    NULLIF(javtxt_tags, ''),
+                    (
+                        SELECT p.javtxt_tags
+                        FROM processed_videos p
+                        WHERE p.code = code_prefix_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_release_date = COALESCE(
+                    NULLIF(javtxt_release_date, ''),
+                    (
+                        SELECT p.javtxt_release_date
+                        FROM processed_videos p
+                        WHERE p.code = code_prefix_movies.code
+                    ),
+                    ''
+                ),
+                author_raw = COALESCE(NULLIF(author_raw, ''), NULLIF(author, ''), '')
+            ''',
+            (UNENRICHED_STATUS, UNENRICHED_STATUS),
+        )
+        cursor.execute(
+            '''
+            UPDATE actor_movies
+            SET javtxt_enrichment_status = COALESCE(
+                    NULLIF(javtxt_enrichment_status, ''),
+                    (
+                        SELECT COALESCE(NULLIF(p.javtxt_enrichment_status, ''), ?)
+                        FROM processed_videos p
+                        WHERE p.code = actor_movies.code
+                    ),
+                    ?
+                ),
+                javtxt_movie_id = COALESCE(
+                    NULLIF(javtxt_movie_id, ''),
+                    (
+                        SELECT p.javtxt_movie_id
+                        FROM processed_videos p
+                        WHERE p.code = actor_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_url = COALESCE(
+                    NULLIF(javtxt_url, ''),
+                    (
+                        SELECT p.javtxt_url
+                        FROM processed_videos p
+                        WHERE p.code = actor_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_tags = COALESCE(
+                    NULLIF(javtxt_tags, ''),
+                    (
+                        SELECT p.javtxt_tags
+                        FROM processed_videos p
+                        WHERE p.code = actor_movies.code
+                    ),
+                    ''
+                ),
+                javtxt_release_date = COALESCE(
+                    NULLIF(javtxt_release_date, ''),
+                    (
+                        SELECT p.javtxt_release_date
+                        FROM processed_videos p
+                        WHERE p.code = actor_movies.code
+                    ),
+                    ''
+                ),
+                author_raw = COALESCE(NULLIF(author_raw, ''), NULLIF(author, ''), '')
+            ''',
+            (UNENRICHED_STATUS, UNENRICHED_STATUS),
+        )
+        cursor.execute(
+            '''
+            UPDATE processed_videos
+            SET javtxt_actors_raw = COALESCE(NULLIF(javtxt_actors_raw, ''), NULLIF(javtxt_actors, ''), '')
+            '''
+        )
+        cursor.executemany(
+            'DELETE FROM actors WHERE lower(name) = ?',
+            [(name,) for name in IGNORED_ACTOR_NAMES],
+        )
+        self._backfill_video_categories(cursor)
+        self._clear_processed_video_javtxt_state_without_detail_reference(cursor)
+        self._clear_ineligible_processed_video_javtxt_state(cursor)
+        self._backfill_web_movie_categories(cursor, 'code_prefix_movies')
+        self._backfill_web_movie_categories(cursor, 'actor_movies')
+        self._normalize_existing_web_movie_codes(cursor)
+        self._propagate_existing_web_movie_javtxt_state(cursor)
+        self._clear_web_movie_javtxt_state_without_detail_reference(cursor, 'code_prefix_movies')
+        self._clear_web_movie_javtxt_state_without_detail_reference(cursor, 'actor_movies')
+        self._clear_legacy_web_movie_javtxt_state_without_release_date(cursor, 'code_prefix_movies')
+        self._clear_legacy_web_movie_javtxt_state_without_release_date(cursor, 'actor_movies')
+        self._clear_ineligible_web_movie_javtxt_state(cursor, 'code_prefix_movies')
+        self._clear_ineligible_web_movie_javtxt_state(cursor, 'actor_movies')
+        self._sanitize_legacy_actor_source_status_columns(cursor)
 
     def _video_source_columns(self, source_key):
         source_key_text = str(source_key or '').strip()
@@ -2623,9 +2644,9 @@ class VideoDatabase(
                        javtxt_last_error, javtxt_last_enriched_at, binghuo_person_id,
                        binghuo_enrichment_status, binghuo_last_error, binghuo_last_enriched_at,
                        binghuo_birthday, binghuo_age, binghuo_height, binghuo_bust,
-                       binghuo_waist, binghuo_hip, baomu_enrichment_status, baomu_last_error,
+                       binghuo_cup, binghuo_measurements_raw, binghuo_waist, binghuo_hip, baomu_enrichment_status, baomu_last_error,
                        baomu_last_enriched_at, baomu_birthday, baomu_height, baomu_bust,
-                       baomu_waist, baomu_hip
+                       baomu_cup, baomu_measurements_raw, baomu_waist, baomu_hip
                 FROM actor_enrichments
             ''')
 
@@ -2636,7 +2657,7 @@ class VideoDatabase(
                 avfan_status = normalize_source_enrichment_status(row[7] or UNENRICHED_STATUS, AVFAN_VIDEO_SOURCE)
                 javtxt_status = normalize_source_enrichment_status(row[10] or UNENRICHED_STATUS, JAVTXT_VIDEO_SOURCE)
                 binghuo_status = normalize_source_enrichment_status(row[15] or UNENRICHED_STATUS, BINGHUO_ACTOR_SOURCE)
-                baomu_status = normalize_source_enrichment_status(row[24] or UNENRICHED_STATUS, BAOMU_ACTOR_SOURCE)
+                baomu_status = normalize_source_enrichment_status(row[26] or UNENRICHED_STATUS, BAOMU_ACTOR_SOURCE)
                 records[row[0] or ''] = {
                     'actor_name': row[0] or '',
                     'actor_id': row[1] or '',
@@ -2660,16 +2681,20 @@ class VideoDatabase(
                     'binghuo_age': row[19] or '',
                     'binghuo_height': row[20] or '',
                     'binghuo_bust': row[21] or '',
-                    'binghuo_waist': row[22] or '',
-                    'binghuo_hip': row[23] or '',
+                    'binghuo_cup': row[22] or '',
+                    'binghuo_measurements_raw': row[23] or '',
+                    'binghuo_waist': row[24] or '',
+                    'binghuo_hip': row[25] or '',
                     'baomu_enrichment_status': baomu_status,
-                    'baomu_last_error': row[25] or '',
-                    'baomu_last_enriched_at': row[26] or '',
-                    'baomu_birthday': row[27] or '',
-                    'baomu_height': row[28] or '',
-                    'baomu_bust': row[29] or '',
-                    'baomu_waist': row[30] or '',
-                    'baomu_hip': row[31] or '',
+                    'baomu_last_error': row[27] or '',
+                    'baomu_last_enriched_at': row[28] or '',
+                    'baomu_birthday': row[29] or '',
+                    'baomu_height': row[30] or '',
+                    'baomu_bust': row[31] or '',
+                    'baomu_cup': row[32] or '',
+                    'baomu_measurements_raw': row[33] or '',
+                    'baomu_waist': row[34] or '',
+                    'baomu_hip': row[35] or '',
                 }
             return records
 
@@ -2738,6 +2763,8 @@ class VideoDatabase(
         age='',
         height='',
         bust='',
+        cup='',
+        measurements_raw='',
         waist='',
         hip='',
         error='',
@@ -2751,6 +2778,8 @@ class VideoDatabase(
         normalized_age = str(age or '').strip()
         normalized_height = str(height or '').strip()
         normalized_bust = str(bust or '').strip()
+        normalized_cup = str(cup or '').strip().upper()
+        normalized_measurements_raw = str(measurements_raw or '').strip()
         normalized_waist = str(waist or '').strip()
         normalized_hip = str(hip or '').strip()
         normalized_error = str(error or '').strip()
@@ -2776,6 +2805,8 @@ class VideoDatabase(
                     binghuo_age = COALESCE(NULLIF(?, ''), binghuo_age),
                     binghuo_height = COALESCE(NULLIF(?, ''), binghuo_height),
                     binghuo_bust = COALESCE(NULLIF(?, ''), binghuo_bust),
+                    binghuo_cup = COALESCE(NULLIF(?, ''), binghuo_cup),
+                    binghuo_measurements_raw = COALESCE(NULLIF(?, ''), binghuo_measurements_raw),
                     binghuo_waist = COALESCE(NULLIF(?, ''), binghuo_waist),
                     binghuo_hip = COALESCE(NULLIF(?, ''), binghuo_hip)
                 WHERE actor_name = ?
@@ -2788,6 +2819,8 @@ class VideoDatabase(
                     normalized_age,
                     normalized_height,
                     normalized_bust,
+                    normalized_cup,
+                    normalized_measurements_raw,
                     normalized_waist,
                     normalized_hip,
                     normalized_name,
@@ -2816,6 +2849,8 @@ class VideoDatabase(
         birthday='',
         height='',
         bust='',
+        cup='',
+        measurements_raw='',
         waist='',
         hip='',
         error='',
@@ -2827,6 +2862,8 @@ class VideoDatabase(
         normalized_birthday = normalize_actor_birthday_for_storage(birthday)
         normalized_height = str(height or '').strip()
         normalized_bust = str(bust or '').strip()
+        normalized_cup = str(cup or '').strip().upper()
+        normalized_measurements_raw = str(measurements_raw or '').strip()
         normalized_waist = str(waist or '').strip()
         normalized_hip = str(hip or '').strip()
         normalized_error = str(error or '').strip()
@@ -2850,6 +2887,8 @@ class VideoDatabase(
                     baomu_birthday = COALESCE(NULLIF(?, ''), baomu_birthday),
                     baomu_height = COALESCE(NULLIF(?, ''), baomu_height),
                     baomu_bust = COALESCE(NULLIF(?, ''), baomu_bust),
+                    baomu_cup = COALESCE(NULLIF(?, ''), baomu_cup),
+                    baomu_measurements_raw = COALESCE(NULLIF(?, ''), baomu_measurements_raw),
                     baomu_waist = COALESCE(NULLIF(?, ''), baomu_waist),
                     baomu_hip = COALESCE(NULLIF(?, ''), baomu_hip)
                 WHERE actor_name = ?
@@ -2860,6 +2899,8 @@ class VideoDatabase(
                     normalized_birthday,
                     normalized_height,
                     normalized_bust,
+                    normalized_cup,
+                    normalized_measurements_raw,
                     normalized_waist,
                     normalized_hip,
                     normalized_name,
@@ -2978,6 +3019,8 @@ class VideoDatabase(
             'binghuo_age': '',
             'binghuo_height': '',
             'binghuo_bust': '',
+            'binghuo_cup': '',
+            'binghuo_measurements_raw': '',
             'binghuo_waist': '',
             'binghuo_hip': '',
             'baomu_enrichment_status': UNENRICHED_STATUS,
@@ -2986,6 +3029,8 @@ class VideoDatabase(
             'baomu_birthday': '',
             'baomu_height': '',
             'baomu_bust': '',
+            'baomu_cup': '',
+            'baomu_measurements_raw': '',
             'baomu_waist': '',
             'baomu_hip': '',
         })
@@ -3188,6 +3233,8 @@ class VideoDatabase(
                         binghuo_age = '',
                         binghuo_height = '',
                         binghuo_bust = '',
+                        binghuo_cup = '',
+                        binghuo_measurements_raw = '',
                         binghuo_waist = '',
                         binghuo_hip = ''
                     WHERE actor_name IN ({placeholders})
@@ -3206,6 +3253,8 @@ class VideoDatabase(
                         baomu_birthday = '',
                         baomu_height = '',
                         baomu_bust = '',
+                        baomu_cup = '',
+                        baomu_measurements_raw = '',
                         baomu_waist = '',
                         baomu_hip = ''
                     WHERE actor_name IN ({placeholders})

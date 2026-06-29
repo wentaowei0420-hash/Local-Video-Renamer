@@ -180,6 +180,8 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
                     "age": "58",
                     "height": "164",
                     "bust": "90",
+                    "cup": "F",
+                    "measurements_raw": "B90(F) W64 H90",
                     "waist": "64",
                     "hip": "90",
                 },
@@ -199,6 +201,8 @@ class ActorBinghuoEnrichmentServiceTest(unittest.TestCase):
         self.assertEqual(record["binghuo_birthday"], "1967-07-02")
         self.assertEqual(record["binghuo_height"], "164")
         self.assertEqual(record["binghuo_bust"], "90")
+        self.assertEqual(record["binghuo_cup"], "F")
+        self.assertEqual(record["binghuo_measurements_raw"], "B90(F) W64 H90")
         self.assertEqual(record["binghuo_waist"], "64")
         self.assertEqual(record["binghuo_hip"], "90")
 

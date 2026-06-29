@@ -77,6 +77,7 @@ class BackendService:
         self.database_loaded = False
 
     def load_database(self):
+        self.db.ensure_startup_maintenance()
         self.actor_library_sync_service.sync_from_video_library()
         self.db.sanitize_ineligible_javtxt_state()
         self.database_loaded = True

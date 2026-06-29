@@ -9,6 +9,10 @@ from app.scraper.browser_window import minimize_browser_window_if_needed
 
 BINGHUO_BASE_URL = 'https://www.fouroursonsinc.com'
 PERSON_PATH_RE = re.compile(r'/person/(\d+)')
+COMPACT_MEASUREMENT_RE = re.compile(
+    r'(?<!\d)(?:[0-9]{1,4}\s*[-/／]\s*)+[0-9]{1,4}(?:\s*\(\s*cm\s*\))?(?!\d)',
+    re.IGNORECASE,
+)
 
 
 class BinghuoActorScraper:
@@ -125,11 +129,15 @@ class BinghuoActorScraper:
         return {
             'person_id': self.extract_person_id(page.url or ''),
             'birthday': _normalize_date_text(
-                _extract_first(body_text, [r'生日[:：]\s*([0-9]{4}-[0-9]{1,2}-[0-9]{1,2})'])
+                _extract_first(body_text, [r'\u751f\u65e5[:：]?\s*([0-9]{4}-[0-9]{1,2}-[0-9]{1,2})'])
             ),
-            'age': _extract_first(body_text, [r'年龄[:：]\s*([0-9]{1,3})']),
-            'height': _normalize_height(_extract_first(body_text, [r'身高[:：]\s*([0-9]{2,3}\s*cm?)'])),
+            'age': _extract_first(body_text, [r'\u5e74\u9f84[:：]?\s*([0-9]{1,3})']),
+            'height': _normalize_height(
+                _extract_first(body_text, [r'\u8eab\u9ad8[:：]?\s*([0-9]{2,3}\s*cm?)'])
+            ),
             'bust': measurements['bust'],
+            'cup': measurements['cup'],
+            'measurements_raw': measurements['measurements_raw'],
             'waist': measurements['waist'],
             'hip': measurements['hip'],
         }
@@ -187,41 +195,127 @@ def _extract_measurement(text, axis):
     return _extract_first(
         normalized_text,
         [
-            rf'{re.escape(_axis_label(axis))}[:：]\s*([0-9]{{2,3}})',
+            rf'{re.escape(_axis_label(axis))}[:：]?\s*([0-9]{{2,3}})',
         ],
     )
 
 
 def _extract_measurements(text):
+    for candidate_text in _measurement_candidate_texts(text):
+        measurements_raw = _extract_explicit_measurements_raw(candidate_text)
+        explicit_measurements = {
+            'bust': _extract_measurement(candidate_text, 'B'),
+            'cup': _extract_cup(candidate_text),
+            'measurements_raw': measurements_raw,
+            'waist': _extract_measurement(candidate_text, 'W'),
+            'hip': _extract_measurement(candidate_text, 'H'),
+        }
+        if any(explicit_measurements.values()):
+            return explicit_measurements
+
+        compact_measurements = _extract_compact_measurements(candidate_text)
+        if compact_measurements is not None:
+            return compact_measurements
+
+    return {'bust': '', 'cup': '', 'measurements_raw': '', 'waist': '', 'hip': ''}
+
+
+def _measurement_candidate_texts(text):
     normalized_text = str(text or '').strip()
-    explicit_measurements = {
-        'bust': _extract_measurement(normalized_text, 'B'),
-        'waist': _extract_measurement(normalized_text, 'W'),
-        'hip': _extract_measurement(normalized_text, 'H'),
-    }
-    if any(explicit_measurements.values()):
-        return explicit_measurements
+    if not normalized_text:
+        return ['']
 
-    match = re.search(
-        r'(?<!\d)([0-9]{2,3})\s*[-/／]\s*([0-9]{2,3})\s*[-/／]\s*([0-9]{2,3})(?:\s*\(\s*cm\s*\))?(?!\d)',
-        normalized_text,
-        re.IGNORECASE,
+    local_candidates = []
+    lines = [str(line or '').strip() for line in normalized_text.splitlines()]
+    sanwei_label = '\u4e09\u56f4'
+    for index, line in enumerate(lines):
+        if sanwei_label not in line:
+            continue
+        nearby_lines = [line]
+        for next_line in lines[index + 1:index + 3]:
+            if next_line:
+                nearby_lines.append(next_line)
+        candidate = ' '.join(part for part in nearby_lines if part).strip()
+        if candidate and candidate not in local_candidates:
+            local_candidates.append(candidate)
+
+    if local_candidates:
+        return local_candidates
+
+    return [normalized_text]
+
+
+def _extract_compact_measurements(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text:
+        return None
+
+    for match in COMPACT_MEASUREMENT_RE.finditer(normalized_text):
+        raw_text = str(match.group(0) or '').strip()
+        groups = re.findall(r'\d+', str(match.group(0) or ''))
+        if len(groups) != 3:
+            return {'bust': '', 'cup': '', 'measurements_raw': raw_text, 'waist': '', 'hip': ''}
+        if not all(2 <= len(group) <= 3 for group in groups):
+            return {'bust': '', 'cup': '', 'measurements_raw': raw_text, 'waist': '', 'hip': ''}
+        bust, waist, hip = groups
+        return {
+            'bust': str(bust or '').strip(),
+            'cup': '',
+            'measurements_raw': raw_text,
+            'waist': str(waist or '').strip(),
+            'hip': str(hip or '').strip(),
+        }
+
+    return None
+
+
+def _extract_cup(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text:
+        return ''
+
+    patterns = (
+        r'B\s*[:锛歖?\s*[0-9]{2,3}\s*cm?\s*\(\s*([A-Z]{1,3})\s*\)',
+        r'B\s*[:锛歖?\s*[0-9]{2,3}\s*\(\s*([A-Z]{1,3})\s*\)',
+        rf'{re.escape(_axis_label("B"))}[:锛歖?\s*[0-9]{{2,3}}\s*cm?\s*\(\s*([A-Z]{{1,3}})\s*\)',
+        rf'{re.escape(_axis_label("B"))}[:锛歖?\s*[0-9]{{2,3}}\s*\(\s*([A-Z]{{1,3}})\s*\)',
     )
-    if not match:
-        return explicit_measurements
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, re.IGNORECASE)
+        if match:
+            return str(match.group(1) or '').strip().upper()
+    return ''
 
-    bust, waist, hip = match.groups()
-    return {
-        'bust': str(bust or '').strip(),
-        'waist': str(waist or '').strip(),
-        'hip': str(hip or '').strip(),
-    }
+
+def _extract_explicit_measurements_raw(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text:
+        return ''
+
+    patterns = (
+        r'(B\s*[:锛歖?\s*[0-9]{2,3}(?:\s*cm?)?(?:\s*\(\s*[A-Z]{1,3}\s*\))?\s*(?:[/\s]+W\s*[:锛歖?\s*[0-9]{2,3}(?:\s*cm?)?)\s*(?:[/\s]+H\s*[:锛歖?\s*[0-9]{2,3}(?:\s*cm?)?))',
+        rf'({re.escape(_axis_label("B"))}\s*[:锛歖?\s*[0-9]{{2,3}}(?:\s*cm?)?(?:\s*\(\s*[A-Z]{{1,3}}\s*\))?\s*'
+        rf'(?:[/\s]+{re.escape(_axis_label("W"))}\s*[:锛歖?\s*[0-9]{{2,3}}(?:\s*cm?)?)\s*'
+        rf'(?:[/\s]+{re.escape(_axis_label("H"))}\s*[:锛歖?\s*[0-9]{{2,3}}(?:\s*cm?)?))',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, re.IGNORECASE)
+        if match:
+            return _strip_measurement_leading_label(str(match.group(1) or '').strip())
+    return ''
+
+
+def _strip_measurement_leading_label(text):
+    normalized_text = str(text or '').strip()
+    if not normalized_text:
+        return ''
+    return re.sub(r'^\s*三围\s*[:：]\s*', '', normalized_text, flags=re.IGNORECASE).strip()
 
 
 def _axis_label(axis):
     mapping = {
-        'B': '胸围',
-        'W': '腰围',
-        'H': '臀围',
+        'B': '\u80f8\u56f4',
+        'W': '\u8170\u56f4',
+        'H': '\u81c0\u56f4',
     }
     return mapping.get(str(axis or '').upper(), str(axis or '').upper())

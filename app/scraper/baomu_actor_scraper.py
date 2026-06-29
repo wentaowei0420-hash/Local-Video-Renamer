@@ -105,14 +105,20 @@ class BaomuActorScraper:
             actress = ((((props.get('initialState') or {}).get('all') or {}).get('actress')) or {})
         if not actress:
             return {}
+        breast_text = str(actress.get('breast') or '').strip()
+        waist_text = str(actress.get('waist') or '').strip()
+        hip_text = str(actress.get('hip') or '').strip()
+        explicit_cup_text = str(actress.get('cup') or '').strip()
+        cup_text = explicit_cup_text or _extract_cup(breast_text)
         return {
             'actor_name': str(actress.get('name') or '').strip(),
             'birthday': _normalize_date(str(actress.get('birthday') or '').strip()),
             'height': _normalize_metric(str(actress.get('height') or '').strip()),
-            'bust': _normalize_metric(str(actress.get('breast') or '').strip()),
-            'waist': _normalize_metric(str(actress.get('waist') or '').strip()),
-            'hip': _normalize_metric(str(actress.get('hip') or '').strip()),
-            'cup': str(actress.get('cup') or '').strip(),
+            'bust': _normalize_metric(breast_text),
+            'waist': _normalize_metric(waist_text),
+            'hip': _normalize_metric(hip_text),
+            'cup': cup_text,
+            'measurements_raw': _build_measurements_raw(breast_text, waist_text, hip_text, explicit_cup_text),
         }
 
 
@@ -124,3 +130,21 @@ def _normalize_date(text):
 def _normalize_metric(text):
     match = re.search(r'(\d{2,3})', str(text or ''))
     return str(match.group(1)) if match else ''
+
+
+def _extract_cup(text):
+    match = re.search(r'\(\s*([A-Z]{1,3})\s*\)', str(text or ''), re.IGNORECASE)
+    return str(match.group(1) or '').strip().upper() if match else ''
+
+
+def _build_measurements_raw(breast_text, waist_text, hip_text, cup_text):
+    parts = []
+    if str(breast_text or '').strip():
+        parts.append(f'breast={str(breast_text or "").strip()}')
+    if str(waist_text or '').strip():
+        parts.append(f'waist={str(waist_text or "").strip()}')
+    if str(hip_text or '').strip():
+        parts.append(f'hip={str(hip_text or "").strip()}')
+    if str(cup_text or '').strip():
+        parts.append(f'cup={str(cup_text or "").strip().upper()}')
+    return '; '.join(parts)

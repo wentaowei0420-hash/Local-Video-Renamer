@@ -35,6 +35,8 @@ class BaomuActorScraperParseProfileTest(unittest.TestCase):
         self.assertEqual(profile["bust"], "101")
         self.assertEqual(profile["waist"], "63")
         self.assertEqual(profile["hip"], "93")
+        self.assertEqual(profile["cup"], "G")
+        self.assertEqual(profile["measurements_raw"], "breast=101cm; waist=63cm; hip=93cm; cup=G")
 
     def test_parse_profile_reads_live_style_initial_state_branch(self):
         next_payload = {
@@ -68,6 +70,8 @@ class BaomuActorScraperParseProfileTest(unittest.TestCase):
         self.assertEqual(profile["bust"], "101")
         self.assertEqual(profile["waist"], "63")
         self.assertEqual(profile["hip"], "93")
+        self.assertEqual(profile["cup"], "G")
+        self.assertEqual(profile["measurements_raw"], "breast=101cm; waist=63cm; hip=93cm; cup=G")
 
     def test_parse_profile_allows_bust_values_with_cup_suffix(self):
         next_payload = {
@@ -93,6 +97,8 @@ class BaomuActorScraperParseProfileTest(unittest.TestCase):
         profile = BaomuActorScraper.parse_profile_html(html)
 
         self.assertEqual(profile["bust"], "84")
+        self.assertEqual(profile["cup"], "D")
+        self.assertEqual(profile["measurements_raw"], "breast=84cm (D)")
 
     def test_parse_profile_normalizes_trailing_dash_birthday(self):
         next_payload = {

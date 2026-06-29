@@ -1,3 +1,5 @@
+import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -29,8 +31,8 @@ from app.core.local_video_labels import (
     NORMALIZED_STATUS,
     RENAME_REQUIRED_STATUS,
 )
-from app.core.project_paths import PROJECT_ROOT
-from app.core.runtime_config import get_backend_port
+from app.core.project_paths import DATABASE_FILE, PROJECT_ROOT
+from app.core.runtime_config import get_backend_port, get_backend_timeout_seconds
 from app.gui.actor_viewer import ActorViewerWindow
 from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.canglangge_viewer import CanglanggeViewerWindow
@@ -137,8 +139,8 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         super().__init__()
         self.pending_renames = []
         self.backend_process = None
-        self.owns_backend_process = False
-        self.backend_instance_token = ''
+        self.owns_backend_process = self._should_own_prelaunched_backend()
+        self.backend_instance_token = self._get_initial_backend_instance_token()
         self.backend_client = BackendClient()
         self.enrichment_thread = None
         self.enrichment_worker = None
@@ -178,10 +180,12 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         self.check_network_guard()
 
     def ensure_backend_running(self):
+        stale_backend_cleaned = False
         health = self.get_backend_health()
         if self._adopt_reusable_backend(health):
             return
         if health is not None:
+            stale_backend_cleaned = self.is_reusable_backend_instance(health) and not self.is_expected_backend_instance(health)
             self.stop_backend_on_port(health=health)
             health = self.get_backend_health()
             if self._adopt_reusable_backend(health):
@@ -204,7 +208,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         )
         self.owns_backend_process = True
 
-        deadline = time.time() + 5
+        deadline = time.time() + VidNormApp._get_backend_start_timeout_seconds()
         while time.time() < deadline:
             if self.backend_process.poll() is not None:
                 stdout_text, stderr_text = self.backend_process.communicate()
@@ -218,13 +222,25 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         health = self.get_backend_health()
         if health is not None:
             raise RuntimeError(tr('main.backend_port_in_use', port=get_backend_port()))
-        raise RuntimeError(tr('main.backend_start_timeout'))
+        if VidNormApp._is_backend_process_alive(self.backend_process):
+            self.stop_owned_backend()
+        raise RuntimeError(self._build_backend_start_failure_message(stale_backend_cleaned=stale_backend_cleaned))
+
+    @staticmethod
+    def _get_initial_backend_instance_token():
+        return str(os.environ.get('VIDNORM_BACKEND_INSTANCE_TOKEN', '') or '').strip()
+
+    @staticmethod
+    def _should_own_prelaunched_backend():
+        return str(os.environ.get('VIDNORM_BACKEND_OWNED', '') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
     def _adopt_reusable_backend(self, health):
         if not self.is_reusable_backend_instance(health):
             return False
         if self.is_expected_backend_instance(health):
             return True
+        if not str(self.backend_instance_token or '').strip():
+            return False
         self.backend_instance_token = str((health or {}).get('backend_instance_token') or self.backend_instance_token)
         self.backend_process = None
         self.owns_backend_process = False
@@ -278,11 +294,9 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
 
     def stop_backend_on_port(self, health=None):
         if self.backend_process and self.backend_process.poll() is None:
-            self.backend_process.terminate()
-            try:
-                self.backend_process.wait(timeout=3)
-            except Exception:
-                pass
+            force_killed = self._terminate_backend_process_handle(self.backend_process, timeout_seconds=3)
+            if force_killed:
+                self._wait_for_backend_release(timeout_seconds=3)
             self.backend_process = None
             return
 
@@ -327,6 +341,48 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         pid = str((health or {}).get('backend_process_id') or '').strip()
         return pid if pid.isdigit() else ''
 
+    def _is_database_locked(self):
+        try:
+            conn = sqlite3.connect(DATABASE_FILE, timeout=1)
+            try:
+                conn.execute('SELECT 1')
+            finally:
+                conn.close()
+        except sqlite3.OperationalError as exc:
+            return 'locked' in str(exc).lower()
+        return False
+
+    @staticmethod
+    def _get_backend_start_timeout_seconds():
+        return max(30.0, float(get_backend_timeout_seconds() or 0))
+
+    def _build_backend_start_failure_message(self, stale_backend_cleaned=False):
+        if self._is_backend_process_alive(self.backend_process):
+            if stale_backend_cleaned:
+                return tr('main.backend_start_timeout_after_cleanup')
+            return tr('main.backend_start_initializing_too_long')
+        if self._is_database_locked():
+            return tr('main.backend_db_locked')
+        if stale_backend_cleaned:
+            return tr('main.backend_start_timeout_after_cleanup')
+        return tr('main.backend_start_timeout')
+
+    @staticmethod
+    def _is_backend_process_alive(process):
+        return process is not None and process.poll() is None
+
+    def _terminate_backend_process_handle(self, process, timeout_seconds=3):
+        if not self._is_backend_process_alive(process):
+            return False
+        process.terminate()
+        try:
+            process.wait(timeout=timeout_seconds)
+        except Exception:
+            pass
+        if self._is_backend_process_alive(process):
+            return self._terminate_backend_pid(getattr(process, 'pid', ''))
+        return False
+
     @staticmethod
     def _terminate_backend_pid(pid):
         normalized_pid = str(pid or '').strip()
@@ -352,12 +408,10 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
     def stop_owned_backend(self):
         if not self.owns_backend_process:
             return
-        if self.backend_process and self.backend_process.poll() is None:
-            self.backend_process.terminate()
-            try:
-                self.backend_process.wait(timeout=3)
-            except Exception:
-                pass
+        if self._is_backend_process_alive(self.backend_process):
+            force_killed = self._terminate_backend_process_handle(self.backend_process, timeout_seconds=3)
+            if force_killed:
+                self._wait_for_backend_release(timeout_seconds=3)
             self.backend_process = None
             self.owns_backend_process = False
             return

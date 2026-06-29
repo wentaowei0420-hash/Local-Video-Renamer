@@ -37,6 +37,16 @@ def _join_items_by_line(items, items_per_line=10):
     return '\n'.join(grouped_lines)
 
 
+def _apply_uniform_widget_width(widgets, minimum_width=0):
+    active_widgets = [widget for widget in list(widgets or []) if widget is not None]
+    if not active_widgets:
+        return
+    target_width = max(widget.sizeHint().width() for widget in active_widgets)
+    target_width = max(int(minimum_width or 0), int(target_width or 0))
+    for widget in active_widgets:
+        widget.setMinimumWidth(target_width)
+
+
 def _clear_layout(layout):
     while layout.count():
         item = layout.takeAt(0)
@@ -325,6 +335,7 @@ class MetricAnalysisWindow(AsyncTaskHostMixin, QDialog):
         self.metric_key = str(self.metric_config.get('key', '') or '').strip()
         self.bucket_windows = []
         self.distribution_buttons = []
+        self.ranking_item_widgets = []
         self._init_async_task_host()
         self.init_ui()
         self.load_data()
@@ -377,6 +388,12 @@ class MetricAnalysisWindow(AsyncTaskHostMixin, QDialog):
 
         ranking_group = QGroupBox(tr('data_center.analysis.ranking_group'))
         ranking_layout = QVBoxLayout(ranking_group)
+        self.ranking_widget = QWidget()
+        self.ranking_grid_layout = QGridLayout(self.ranking_widget)
+        self.ranking_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.ranking_grid_layout.setHorizontalSpacing(8)
+        self.ranking_grid_layout.setVerticalSpacing(8)
+        ranking_layout.addWidget(self.ranking_widget)
         self.ranking_label = QLabel(tr('common.no_data'))
         self.ranking_label.setWordWrap(True)
         self.ranking_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -422,11 +439,7 @@ class MetricAnalysisWindow(AsyncTaskHostMixin, QDialog):
 
         self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
         self._render_distribution_rows(distribution_rows, distribution_items_per_line)
-        self.ranking_label.setText(
-            _join_items_by_line(ranking_items, items_per_line=ranking_items_per_line)
-            if ranking_items
-            else tr('common.no_data')
-        )
+        self._render_ranking_rows(ranking_items, ranking_items_per_line)
 
     def _render_distribution_rows(self, distribution_rows, items_per_line):
         clickable_rows = [
@@ -459,6 +472,7 @@ class MetricAnalysisWindow(AsyncTaskHostMixin, QDialog):
                     index % max(1, items_per_line),
                 )
                 self.distribution_buttons.append(button)
+            _apply_uniform_widget_width(self.distribution_buttons, minimum_width=104)
             self.distribution_button_widget.show()
         else:
             self.distribution_button_widget.hide()
@@ -472,6 +486,31 @@ class MetricAnalysisWindow(AsyncTaskHostMixin, QDialog):
         )
         self.distribution_label.setText(label_text)
         self.distribution_label.setVisible(bool(label_text))
+
+    def _render_ranking_rows(self, ranking_items, items_per_line):
+        self.ranking_item_widgets = []
+        _clear_layout(self.ranking_grid_layout)
+
+        if not ranking_items:
+            self.ranking_widget.hide()
+            self.ranking_label.setText(tr('common.no_data'))
+            self.ranking_label.show()
+            return
+
+        for index, item_text in enumerate(ranking_items):
+            label = QLabel(item_text)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.ranking_grid_layout.addWidget(
+                label,
+                index // max(1, items_per_line),
+                index % max(1, items_per_line),
+            )
+            self.ranking_item_widgets.append(label)
+
+        _apply_uniform_widget_width(self.ranking_item_widgets, minimum_width=180)
+        self.ranking_widget.show()
+        self.ranking_label.hide()
 
     def _is_clickable_distribution_row(self, row):
         return self.analysis_type == 'actor' and row.get('bucket_value') is not None

@@ -111,6 +111,7 @@ class ActorDetailViewerWindow(QDialog):
         self.basic_measurements_grid.set_items(
             [
                 ('measurements', tr('actor.detail.measurements'), ''),
+                ('cup', tr('actor.detail.cup'), ''),
             ]
         )
         basic_layout.addWidget(self.basic_measurements_grid)
@@ -235,6 +236,7 @@ class ActorDetailViewerWindow(QDialog):
                 self.detail.get('binghuo_hip', ''),
             ),
         )
+        self.basic_measurements_grid.set_value('cup', self.detail.get('binghuo_cup', '') or tr('common.empty'))
         self.basic_status_grid.set_value('web_status', self.detail.get('web_enrichment_status', '') or tr('actor.detail.web_status_default'))
 
         self.local_grid.set_value(

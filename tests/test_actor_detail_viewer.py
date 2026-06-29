@@ -31,6 +31,7 @@ class _BackendStub:
             'binghuo_person_id': 'binghuo-1',
             'binghuo_height': '170',
             'binghuo_bust': '88',
+            'binghuo_cup': 'F',
             'binghuo_waist': '60',
             'binghuo_hip': '90',
             'appearance_code_count': 3,
@@ -70,6 +71,7 @@ class ActorDetailViewerWindowTest(unittest.TestCase):
             self.assertEqual(window.basic_grid.value_labels['binghuo_height'].text(), '170 cm')
             self.assertEqual(window.basic_grid.value_labels['appearance_code_count'].text(), '3')
             self.assertEqual(window.basic_grid.value_labels['code_prefix_library_count'].text(), '2')
+            self.assertEqual(window.basic_measurements_grid.value_labels['cup'].text(), 'F')
             self.assertEqual(
                 window.basic_measurements_grid.value_labels['measurements'].text(),
                 '胸围：88 cm 腰围：60 cm 臀围：90 cm',
