@@ -191,6 +191,51 @@ class DataCenterJavtxtFilterReuseRegressionTest(unittest.TestCase):
         self.assertEqual(summary['total_count'], 1)
         self.assertEqual(filter_service.calls, 1)
 
+    def test_actor_javtxt_summary_reuses_merged_movies_for_issue_groups(self):
+        class FakeDatabase:
+            @staticmethod
+            def list_actors():
+                return [{'name': 'Actor A'}]
+
+            @staticmethod
+            def list_actor_movies_by_names(actor_names):
+                return {
+                    'Actor A': [
+                        {
+                            'code': 'AAA-001',
+                            'title': 'Movie 1',
+                            'author': 'Actor A',
+                            'author_raw': 'Actor A',
+                            'release_date': '2024-01-01',
+                            'avfan_url': '',
+                            'page_number': 1,
+                            'javtxt_enrichment_status': NO_SEARCH_RESULTS_STATUS,
+                            'javtxt_movie_id': '',
+                            'javtxt_url': '',
+                            'javtxt_tags': '',
+                            'javtxt_release_date': '2024-01-01',
+                            'video_category': '',
+                        }
+                    ]
+                }
+
+            @staticmethod
+            def get_javtxt_actor_cache_by_codes(codes):
+                return {}
+
+            @staticmethod
+            def list_video_summary_rows():
+                return []
+
+        service = DataCenterService(FakeDatabase(), video_filter_service=None)
+        original_merge = service._merge_movies_by_code
+
+        with patch.object(service, '_merge_movies_by_code', wraps=original_merge) as merge_mock:
+            summary = service._build_actor_source_summary('javtxt', filter_settings=None)
+
+        self.assertEqual(summary['total_count'], 1)
+        self.assertEqual(merge_mock.call_count, 1)
+
 
 class StartupMaintenancePersistenceRegressionTest(unittest.TestCase):
     def test_startup_maintenance_is_skipped_after_it_is_marked_complete(self):

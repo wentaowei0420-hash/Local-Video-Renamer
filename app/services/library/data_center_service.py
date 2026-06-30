@@ -392,10 +392,11 @@ class DataCenterService:
             'pending_label': PENDING_VIDEO_LABEL,
             'list_kind': list_kind,
             'issue_groups': self._build_javtxt_issue_groups_by_kind(
-                filtered_movies_by_group,
+                merged_movies if str(list_kind or '').strip() == 'video' else filtered_movies_by_group,
                 filter_settings=filter_settings,
                 list_kind=list_kind,
                 movies_already_filtered=True,
+                movies_already_merged=str(list_kind or '').strip() == 'video',
             ),
         }
 
@@ -804,7 +805,13 @@ class DataCenterService:
             ]
         )
 
-    def _build_javtxt_video_issue_groups(self, movies, filter_settings=None, movies_already_filtered=False):
+    def _build_javtxt_video_issue_groups(
+        self,
+        movies,
+        filter_settings=None,
+        movies_already_filtered=False,
+        movies_already_merged=False,
+    ):
         issue_items = {
             'no_search': [],
             'no_detail': [],
@@ -818,7 +825,8 @@ class DataCenterService:
             movies or [],
             filter_settings=filter_settings,
         )
-        for movie in self._merge_movies_by_code(visible_movies):
+        merged_movies = list(visible_movies or []) if movies_already_merged else self._merge_movies_by_code(visible_movies)
+        for movie in merged_movies:
             issue_key = self._classify_javtxt_issue_key(movie)
             if not issue_key:
                 continue
@@ -843,9 +851,10 @@ class DataCenterService:
         filter_settings=None,
         list_kind='video',
         movies_already_filtered=False,
+        movies_already_merged=False,
     ):
         if str(list_kind or '').strip() == 'video':
-            flat_movies = [
+            flat_movies = list(movies_by_group or []) if movies_already_merged else [
                 movie
                 for movies in (movies_by_group or {}).values()
                 for movie in (movies or [])
@@ -854,6 +863,7 @@ class DataCenterService:
                 flat_movies,
                 filter_settings=filter_settings,
                 movies_already_filtered=movies_already_filtered,
+                movies_already_merged=movies_already_merged,
             )
 
         no_search_items = []

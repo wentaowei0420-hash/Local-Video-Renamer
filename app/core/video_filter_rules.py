@@ -1,4 +1,5 @@
 import re
+from functools import lru_cache
 
 from app.core.javtxt_video_state import COLLECTION_TITLE_KEYWORDS
 from app.core.enrichment_status import UNENRICHED_STATUS
@@ -75,7 +76,10 @@ def matches_filter_keywords(value, keywords):
     if not raw_value:
         return False
     normalized_value = raw_value.lower()
-    return any(_matches_single_keyword(raw_value, normalized_value, keyword) for keyword in _normalize_keyword_list(keywords))
+    return any(
+        _matches_single_keyword(raw_value, normalized_value, keyword)
+        for keyword in _normalize_keyword_values(keywords)
+    )
 
 
 def should_skip_video_before_enrichment(video, settings):
@@ -114,6 +118,21 @@ def _normalize_keyword_list(values):
         seen.add(lowered)
         normalized.append(keyword)
     return normalized
+
+
+@lru_cache(maxsize=256)
+def _normalize_keyword_tuple(values):
+    return tuple(_normalize_keyword_list(list(values or ())))
+
+
+def _normalize_keyword_values(values):
+    if isinstance(values, str):
+        values = (values,)
+    elif isinstance(values, (list, tuple)):
+        values = tuple(values)
+    else:
+        values = ()
+    return _normalize_keyword_tuple(values)
 
 
 def _get_normalized_rules(settings):
