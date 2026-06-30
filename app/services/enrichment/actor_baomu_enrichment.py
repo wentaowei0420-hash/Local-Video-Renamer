@@ -12,7 +12,7 @@ from app.services.library.canglangge_candidate_service import CanglanggeCandidat
 
 
 class ActorBaomuEnrichmentService:
-    REQUIRED_FIELDS = ('birthday', 'height', 'bust', 'waist', 'hip')
+    REQUIRED_FIELDS = ('birthday', 'height', 'bust', 'cup', 'waist', 'hip')
 
     def __init__(
         self,
@@ -173,6 +173,7 @@ class ActorBaomuEnrichmentService:
             'birthday': str(actor_row.get('birthday', '') or record.get('binghuo_birthday', '') or '').strip(),
             'height': str(record.get('binghuo_height', '') or '').strip(),
             'bust': str(record.get('binghuo_bust', '') or '').strip(),
+            'cup': str(record.get('binghuo_cup', '') or '').strip().upper(),
             'waist': str(record.get('binghuo_waist', '') or '').strip(),
             'hip': str(record.get('binghuo_hip', '') or '').strip(),
         }
@@ -180,6 +181,7 @@ class ActorBaomuEnrichmentService:
             merged['birthday'] = merged['birthday'] or str(record.get('baomu_birthday', '') or '').strip()
             merged['height'] = merged['height'] or str(record.get('baomu_height', '') or '').strip()
             merged['bust'] = merged['bust'] or str(record.get('baomu_bust', '') or '').strip()
+            merged['cup'] = merged['cup'] or str(record.get('baomu_cup', '') or '').strip().upper()
             merged['waist'] = merged['waist'] or str(record.get('baomu_waist', '') or '').strip()
             merged['hip'] = merged['hip'] or str(record.get('baomu_hip', '') or '').strip()
         return merged

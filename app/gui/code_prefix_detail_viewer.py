@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from app.core.ladder_board import LADDER_BOARD_CODE_PREFIX, LADDER_TIERS
-from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary
+from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary, format_update_frequency_summary
 from app.gui.i18n import tr
 from app.gui.video_category_batch_action_widget import VideoCategoryBatchActionWidget
 from app.gui.video_category_update_events import video_category_update_event_bus
@@ -110,6 +110,7 @@ class CodePrefixDetailViewerWindow(QDialog):
         self.last_enriched_grid.set_items(
             [
                 ('last_enriched', tr('code_prefix.detail.last_enriched'), ''),
+                ('update_frequency', tr('code_prefix.detail.update_frequency'), ''),
             ]
         )
         summary_layout.addWidget(self.last_enriched_grid)
@@ -183,6 +184,10 @@ class CodePrefixDetailViewerWindow(QDialog):
         self.summary_grid.set_value('earliest_date', self.detail.get('earliest_release_date', '') or tr('common.empty'))
         self.summary_grid.set_value('latest_date', self.detail.get('latest_release_date', '') or tr('common.empty'))
         self.last_enriched_grid.set_value('last_enriched', self.detail.get('last_enriched_at', '') or tr('common.empty'))
+        self.last_enriched_grid.set_value(
+            'update_frequency',
+            format_update_frequency_summary(self.detail.get('update_frequency', {})),
+        )
         self.stats_grid.set_value(
             'year_distribution',
             format_distribution_summary(self.detail.get('year_distribution', []), 'year', items_per_line=10),

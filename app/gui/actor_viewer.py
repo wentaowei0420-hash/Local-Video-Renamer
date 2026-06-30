@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
 
 from app.core.enrichment_sources import (
     AVFAN_VIDEO_SOURCE,
+    BAOMU_ACTOR_SOURCE,
     BINGHUO_ACTOR_SOURCE,
     JAVTXT_VIDEO_SOURCE,
     get_video_enrichment_source_label,
@@ -122,6 +123,9 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.btn_reset_binghuo = QPushButton(tr('actor.viewer.reset_binghuo'))
         self.btn_reset_binghuo.clicked.connect(lambda: self.reset_selected_rows(BINGHUO_ACTOR_SOURCE))
 
+        self.btn_reset_baomu = QPushButton(tr('actor.viewer.reset_baomu'))
+        self.btn_reset_baomu.clicked.connect(lambda: self.reset_selected_rows(BAOMU_ACTOR_SOURCE))
+
         self.btn_refresh = QPushButton(tr('common.refresh'))
         self.btn_refresh.clicked.connect(self.load_data)
         self.btn_prev_page = QPushButton(tr('video.category.page_prev'))
@@ -147,6 +151,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         action_layout.addWidget(self.btn_reset_avfan)
         action_layout.addWidget(self.btn_reset_javtxt)
         action_layout.addWidget(self.btn_reset_binghuo)
+        action_layout.addWidget(self.btn_reset_baomu)
         action_layout.addWidget(self.page_info_label)
         action_layout.addWidget(self.btn_prev_page)
         action_layout.addWidget(self.btn_next_page)
@@ -178,6 +183,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
                 self.btn_reset_avfan,
                 self.btn_reset_javtxt,
                 self.btn_reset_binghuo,
+                self.btn_reset_baomu,
                 self.btn_prev_page,
                 self.btn_next_page,
                 self.btn_refresh,

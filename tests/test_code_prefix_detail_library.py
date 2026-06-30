@@ -42,6 +42,9 @@ class CodePrefixDetailLibraryTest(unittest.TestCase):
         self.assertEqual(detail['ladder_tier'], 'A')
         self.assertEqual([row['code'] for row in detail['local_videos']], ['NEM-001', 'NEM-002'])
         self.assertEqual([row['code'] for row in detail['movies']], ['NEM-001'])
+        self.assertEqual(detail['update_frequency']['video_count'], 1)
+        self.assertEqual(detail['update_frequency']['month_count'], 1)
+        self.assertEqual(detail['update_frequency']['videos_per_month'], 1.0)
 
     def test_prefix_detail_keeps_top_14_actors_by_appearance_count(self):
         class FakeDatabase:

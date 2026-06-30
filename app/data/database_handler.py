@@ -3300,14 +3300,7 @@ class VideoDatabase(
                     UPDATE actor_enrichments
                     SET baomu_enrichment_status = ?,
                         baomu_last_error = '',
-                        baomu_last_enriched_at = NULL,
-                        baomu_birthday = '',
-                        baomu_height = '',
-                        baomu_bust = '',
-                        baomu_cup = '',
-                        baomu_measurements_raw = '',
-                        baomu_waist = '',
-                        baomu_hip = ''
+                        baomu_last_enriched_at = NULL
                     WHERE actor_name IN ({placeholders})
                     ''',
                     [UNENRICHED_STATUS, *normalized_names],

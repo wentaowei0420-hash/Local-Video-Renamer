@@ -64,8 +64,10 @@ class ActorBaomuEnrichmentServiceTest(unittest.TestCase):
         self._insert_actor("Actor Library Missing", birthday="", age="")
         self._insert_actor("Actor Never Attempted", birthday="", age="")
         self._insert_actor("Actor Complete", birthday="2000-01-02", age="26")
+        self._insert_actor("Actor Missing Cup", birthday="1999-03-04", age="27")
         self.db.save_binghuo_actor_profile("Actor Library Missing", ENRICHED_STATUS, birthday="2001-02-03", age="25", height="", bust="84", waist="58", hip="86")
-        self.db.save_binghuo_actor_profile("Actor Complete", ENRICHED_STATUS, birthday="2000-01-02", age="26", height="168", bust="85", waist="59", hip="87")
+        self.db.save_binghuo_actor_profile("Actor Complete", ENRICHED_STATUS, birthday="2000-01-02", age="26", height="168", bust="85", cup="C", waist="59", hip="87")
+        self.db.save_binghuo_actor_profile("Actor Missing Cup", ENRICHED_STATUS, birthday="1999-03-04", age="27", height="165", bust="86", cup="", waist="58", hip="88")
 
         service = ActorBaomuEnrichmentService(
             self.db,
@@ -83,7 +85,7 @@ class ActorBaomuEnrichmentServiceTest(unittest.TestCase):
 
         self.assertEqual(
             [row["actor_name"] for row in candidates],
-            ["Actor Canglangge Missing", "Actor Library Missing"],
+            ["Actor Canglangge Missing", "Actor Library Missing", "Actor Missing Cup"],
         )
 
     def test_success_persists_baomu_profile_fields(self):

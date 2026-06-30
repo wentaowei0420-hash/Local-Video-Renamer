@@ -1407,7 +1407,7 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
         self.assertEqual(record['binghuo_waist'], '')
         self.assertEqual(record['binghuo_hip'], '')
 
-    def test_reset_actor_enrichments_baomu_clears_only_baomu_fields(self):
+    def test_reset_actor_enrichments_baomu_resets_status_without_clearing_saved_profile_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'video_database.db'
             db = VideoDatabase(db_path)
@@ -1420,6 +1420,7 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
                 age='35',
                 height='168',
                 bust='88',
+                cup='F',
                 waist='60',
                 hip='90',
             )
@@ -1429,6 +1430,7 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
                 birthday='1991-02-03',
                 height='169',
                 bust='89',
+                cup='G',
                 waist='61',
                 hip='91',
                 error='old error',
@@ -1441,13 +1443,15 @@ class VideoCodeDatabaseMigrationTest(unittest.TestCase):
         self.assertEqual(record['actor_id'], 'actor-1')
         self.assertEqual(record['binghuo_enrichment_status'], ENRICHED_STATUS)
         self.assertEqual(record['binghuo_height'], '168')
+        self.assertEqual(record['binghuo_cup'], 'F')
         self.assertEqual(record['baomu_enrichment_status'], UNENRICHED_STATUS)
         self.assertEqual(record['baomu_last_error'], '')
-        self.assertEqual(record['baomu_birthday'], '')
-        self.assertEqual(record['baomu_height'], '')
-        self.assertEqual(record['baomu_bust'], '')
-        self.assertEqual(record['baomu_waist'], '')
-        self.assertEqual(record['baomu_hip'], '')
+        self.assertEqual(record['baomu_birthday'], '1991-02-03')
+        self.assertEqual(record['baomu_height'], '169')
+        self.assertEqual(record['baomu_bust'], '89')
+        self.assertEqual(record['baomu_cup'], 'G')
+        self.assertEqual(record['baomu_waist'], '61')
+        self.assertEqual(record['baomu_hip'], '91')
 
     def test_reopen_database_sanitizes_legacy_actor_avfan_status_text(self):
         with tempfile.TemporaryDirectory() as temp_dir:

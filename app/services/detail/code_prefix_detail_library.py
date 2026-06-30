@@ -13,6 +13,7 @@ from app.services.detail import (
     count_uncategorized_video_rows,
     resolve_update_status,
 )
+from app.services.detail.update_frequency_service import calculate_update_frequency
 from app.services.identity import split_actor_names
 from app.services.library import extract_code_prefix
 
@@ -54,6 +55,7 @@ class CodePrefixDetailLibrary:
             'avfan_total_pages': enrichment.get('avfan_total_pages', 0),
             'avfan_total_videos': enrichment.get('avfan_total_videos', 0),
             'last_enriched_at': enrichment.get('last_enriched_at', ''),
+            'update_frequency': calculate_update_frequency(eligible_movies),
             'earliest_release_date': earliest_release_date,
             'latest_release_date': latest_release_date,
             'year_distribution': self._build_year_distribution(eligible_movies),

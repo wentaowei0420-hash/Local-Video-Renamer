@@ -34,6 +34,11 @@ class _BackendStub:
             'binghuo_cup': 'F',
             'binghuo_waist': '60',
             'binghuo_hip': '90',
+            'web_update_frequency': {
+                'video_count': 2,
+                'month_count': 1,
+                'videos_per_month': 2.0,
+            },
             'appearance_code_count': 3,
             'code_prefix_library_count': 2,
             'web_url': '',
@@ -71,7 +76,8 @@ class ActorDetailViewerWindowTest(unittest.TestCase):
             self.assertEqual(window.basic_grid.value_labels['binghuo_height'].text(), '170 cm')
             self.assertEqual(window.basic_grid.value_labels['appearance_code_count'].text(), '3')
             self.assertEqual(window.basic_grid.value_labels['code_prefix_library_count'].text(), '2')
-            self.assertEqual(window.basic_measurements_grid.value_labels['cup'].text(), 'F')
+            self.assertEqual(window.basic_grid.value_labels['binghuo_cup'].text(), 'F')
+            self.assertEqual(window.basic_grid.value_labels['web_update_frequency'].text(), '2.00 部/月')
             self.assertEqual(
                 window.basic_measurements_grid.value_labels['measurements'].text(),
                 '胸围：88 cm 腰围：60 cm 臀围：90 cm',

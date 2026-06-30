@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from app.core.ladder_board import LADDER_BOARD_ACTOR, LADDER_TIERS
-from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary
+from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary, format_update_frequency_summary
 from app.gui.i18n import tr
 from app.gui.video_category_update_events import video_category_update_event_bus
 from app.gui.video_filter_events import video_filter_event_bus
@@ -104,6 +104,8 @@ class ActorDetailViewerWindow(QDialog):
                 ('web_total', tr('actor.detail.web_total'), ''),
                 ('appearance_code_count', tr('actor.detail.appearance_code_count'), ''),
                 ('code_prefix_library_count', tr('actor.detail.code_prefix_library_count'), ''),
+                ('binghuo_cup', tr('actor.detail.cup'), ''),
+                ('web_update_frequency', tr('actor.detail.update_frequency'), ''),
             ]
         )
         basic_layout.addWidget(self.basic_grid)
@@ -111,7 +113,6 @@ class ActorDetailViewerWindow(QDialog):
         self.basic_measurements_grid.set_items(
             [
                 ('measurements', tr('actor.detail.measurements'), ''),
-                ('cup', tr('actor.detail.cup'), ''),
             ]
         )
         basic_layout.addWidget(self.basic_measurements_grid)
@@ -228,6 +229,11 @@ class ActorDetailViewerWindow(QDialog):
         self.basic_grid.set_value('web_total', str(self.detail.get('web_total_videos', 0)))
         self.basic_grid.set_value('appearance_code_count', str(self.detail.get('appearance_code_count', 0)))
         self.basic_grid.set_value('code_prefix_library_count', str(self.detail.get('code_prefix_library_count', 0)))
+        self.basic_grid.set_value('binghuo_cup', self.detail.get('binghuo_cup', '') or tr('common.empty'))
+        self.basic_grid.set_value(
+            'web_update_frequency',
+            format_update_frequency_summary(self.detail.get('web_update_frequency', {})),
+        )
         self.basic_measurements_grid.set_value(
             'measurements',
             self._format_measurements(
@@ -236,7 +242,6 @@ class ActorDetailViewerWindow(QDialog):
                 self.detail.get('binghuo_hip', ''),
             ),
         )
-        self.basic_measurements_grid.set_value('cup', self.detail.get('binghuo_cup', '') or tr('common.empty'))
         self.basic_status_grid.set_value('web_status', self.detail.get('web_enrichment_status', '') or tr('actor.detail.web_status_default'))
 
         self.local_grid.set_value(

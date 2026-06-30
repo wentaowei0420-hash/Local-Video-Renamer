@@ -7,7 +7,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-from app.core.enrichment_sources import BINGHUO_ACTOR_SOURCE
+from app.core.enrichment_sources import BAOMU_ACTOR_SOURCE, BINGHUO_ACTOR_SOURCE
 from app.gui.actor_viewer import ActorViewerWindow
 from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.code_prefix_viewer import CodePrefixViewerWindow
@@ -148,6 +148,7 @@ class ViewerInlineAddTest(unittest.TestCase):
                     window.btn_reset_avfan,
                     window.btn_reset_javtxt,
                     window.btn_reset_binghuo,
+                    window.btn_reset_baomu,
                     window.btn_refresh,
                 )
 
@@ -174,6 +175,7 @@ class ViewerInlineAddTest(unittest.TestCase):
                         window.btn_reset_avfan,
                         window.btn_reset_javtxt,
                         window.btn_reset_binghuo,
+                        window.btn_reset_baomu,
                         window.btn_refresh,
                     ],
                 )
@@ -193,6 +195,22 @@ class ViewerInlineAddTest(unittest.TestCase):
                     window.btn_reset_binghuo.click()
 
                 self.assertEqual(backend.reset_calls, [(['Alpha'], BINGHUO_ACTOR_SOURCE)])
+            finally:
+                window.hide()
+                window.deleteLater()
+
+    def test_actor_viewer_baomu_reset_uses_selected_rows(self):
+        backend = ActorBackendStub()
+        with patch.object(AsyncTaskHostMixin, 'start_async_task', _run_sync_async_task):
+            window = ActorViewerWindow(backend)
+            try:
+                window.table.selectRow(0)
+                with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes), patch.object(
+                    QMessageBox, 'information'
+                ):
+                    window.btn_reset_baomu.click()
+
+                self.assertEqual(backend.reset_calls, [(['Alpha'], BAOMU_ACTOR_SOURCE)])
             finally:
                 window.hide()
                 window.deleteLater()

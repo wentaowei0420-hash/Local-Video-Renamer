@@ -11,6 +11,7 @@ from app.core.enrichment_status import UNENRICHED_STATUS
 from app.core.actor_profile_display import normalize_actor_age_for_display, normalize_actor_birthday_for_display
 from app.core.video_code import standardize_video_code
 from app.services.detail import build_actor_detail_web_url, build_video_category_distribution, resolve_update_status
+from app.services.detail.update_frequency_service import calculate_update_frequency
 from app.services.identity import split_actor_names
 from app.services.library import extract_code_prefix
 
@@ -80,6 +81,7 @@ class ActorDetailLibrary:
             'web_total_videos': web_record.get('avfan_total_videos', 0),
             'eligible_video_count': len(eligible_web_movies),
             'eligible_enriched_video_count': web_summary['enriched_count'],
+            'web_update_frequency': calculate_update_frequency(eligible_web_movies),
             'web_last_enriched_at': web_record.get('last_enriched_at', ''),
             'web_earliest_release_date': web_earliest,
             'web_latest_release_date': web_latest,

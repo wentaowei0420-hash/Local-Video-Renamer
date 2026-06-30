@@ -286,6 +286,9 @@ class ActorProfileDisplayTest(unittest.TestCase):
         self.assertEqual(detail['binghuo_hip'], '88')
         self.assertEqual(detail['appearance_code_count'], 3)
         self.assertEqual(detail['code_prefix_library_count'], 2)
+        self.assertEqual(detail['web_update_frequency']['video_count'], 2)
+        self.assertEqual(detail['web_update_frequency']['month_count'], 1)
+        self.assertEqual(detail['web_update_frequency']['videos_per_month'], 2.0)
 
     def test_actor_detail_falls_back_to_baomu_profile_fields_when_binghuo_is_missing(self):
         class FakeDatabase:
