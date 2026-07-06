@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 
 from app.core.actor_data_analysis import ACTOR_ANALYSIS_METRIC_MAP
 from app.core.code_prefix_data_analysis import CODE_PREFIX_ANALYSIS_METRIC_MAP
@@ -58,14 +59,17 @@ class DataCenterService:
         ),
     }
 
-    def __init__(self, database, video_filter_service=None, snapshot_file=None):
+    def __init__(self, database, video_filter_service=None, snapshot_file=None, refresh_logger=None):
         self.database = database
         self.code_prefix_library = CodePrefixLibrary(database)
         self.video_filter_service = video_filter_service or VideoFilterService()
         self.snapshot_file = Path(snapshot_file) if snapshot_file else None
+        self.refresh_logger = refresh_logger
         self._snapshot_filter_fingerprint = self._build_filter_settings_fingerprint(self._load_filter_settings())
         self._summary_cache = None
         self._summary_cache_refreshed_at = ''
+        self._summary_cache_refresh_duration_ms = 0
+        self._summary_cache_refresh_duration_text = ''
         self._summary_cache_lock = Lock()
         self._analysis_cache = {}
         self._analysis_cache_lock = Lock()
@@ -82,18 +86,34 @@ class DataCenterService:
                 return {
                     'summary': dict(self._summary_cache or {}),
                     'refreshed_at': self._summary_cache_refreshed_at,
+                    'refresh_duration_ms': self._summary_cache_refresh_duration_ms,
+                    'refresh_duration_text': self._summary_cache_refresh_duration_text,
                 }
             if not force_refresh:
                 self._summary_cache = None
                 self._summary_cache_refreshed_at = ''
+                self._summary_cache_refresh_duration_ms = 0
+                self._summary_cache_refresh_duration_text = ''
 
+            started_at = perf_counter()
             summary = self._build_summary(filter_settings=filter_settings)
+            refresh_duration_ms = self._build_duration_ms(started_at)
             self._summary_cache = summary
             self._summary_cache_refreshed_at = self._current_cache_timestamp()
+            self._summary_cache_refresh_duration_ms = refresh_duration_ms
+            self._summary_cache_refresh_duration_text = self._format_duration_text(refresh_duration_ms)
             self._persist_snapshots()
+            self._log_refresh(
+                snapshot_key='data_center',
+                refreshed_at=self._summary_cache_refreshed_at,
+                refresh_duration_ms=refresh_duration_ms,
+                cache_kind='summary',
+            )
             return {
                 'summary': dict(summary or {}),
                 'refreshed_at': self._summary_cache_refreshed_at,
+                'refresh_duration_ms': self._summary_cache_refresh_duration_ms,
+                'refresh_duration_text': self._summary_cache_refresh_duration_text,
             }
 
     def get_actor_metric_analysis(self, metric_key, force_refresh=False):
@@ -186,6 +206,10 @@ class DataCenterService:
         if summary_snapshot is not None and self._is_complete_summary_snapshot(summary_snapshot.get('summary', {})):
             self._summary_cache = summary_snapshot.get('summary', {})
             self._summary_cache_refreshed_at = str(summary_snapshot.get('refreshed_at', '') or '').strip()
+            self._summary_cache_refresh_duration_ms = int(summary_snapshot.get('refresh_duration_ms', 0) or 0)
+            self._summary_cache_refresh_duration_text = str(
+                summary_snapshot.get('refresh_duration_text', '') or ''
+            ).strip()
 
         analysis_snapshot_version = int(payload.get('analysis_snapshot_version', 0) or 0)
         if analysis_snapshot_version == self.ANALYSIS_SNAPSHOT_VERSION:
@@ -234,6 +258,8 @@ class DataCenterService:
         return {
             'summary': dict(self._summary_cache or {}),
             'refreshed_at': self._summary_cache_refreshed_at,
+            'refresh_duration_ms': int(self._summary_cache_refresh_duration_ms or 0),
+            'refresh_duration_text': str(self._summary_cache_refresh_duration_text or '').strip(),
         }
 
     def _build_persisted_analysis_snapshots(self):
@@ -257,7 +283,39 @@ class DataCenterService:
         return {
             'summary': dict(summary or {}),
             'refreshed_at': refreshed_at,
+            'refresh_duration_ms': int(snapshot.get('refresh_duration_ms', 0) or 0),
+            'refresh_duration_text': str(snapshot.get('refresh_duration_text', '') or '').strip(),
         }
+
+    def _log_refresh(self, snapshot_key, refreshed_at, refresh_duration_ms, cache_kind=''):
+        logger = getattr(self, 'refresh_logger', None)
+        if not callable(logger):
+            return
+        try:
+            logger(
+                snapshot_key=str(snapshot_key or '').strip() or 'data_center',
+                refreshed_at=str(refreshed_at or '').strip(),
+                refresh_duration_ms=int(refresh_duration_ms or 0),
+                refresh_duration_text=self._format_duration_text(refresh_duration_ms),
+                cache_kind=str(cache_kind or '').strip(),
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _build_duration_ms(started_at):
+        return max(0, int(round((perf_counter() - float(started_at or 0.0)) * 1000)))
+
+    @staticmethod
+    def _format_duration_text(duration_ms):
+        total_seconds = max(0, int(round((int(duration_ms or 0) / 1000.0))))
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f'{hours}小时{minutes}分{seconds}秒'
+        if minutes > 0:
+            return f'{minutes}分{seconds}秒'
+        return f'{seconds}秒'
 
     @classmethod
     def _is_complete_summary_snapshot(cls, summary):
@@ -655,6 +713,8 @@ class DataCenterService:
             self._snapshot_filter_fingerprint = current_fingerprint
             self._summary_cache = None
             self._summary_cache_refreshed_at = ''
+            self._summary_cache_refresh_duration_ms = 0
+            self._summary_cache_refresh_duration_text = ''
             self._analysis_cache = {}
         return filter_settings
 

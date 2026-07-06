@@ -107,12 +107,13 @@ def make_handler(service):
                 return service.update_video_category(body.get('code'), body.get('category'))
             if method == 'GET' and path == '/database/actors':
                 search_text = query.get('q', [''])[0]
-                return service.list_actors(
+                return service.list_actors_snapshot(
                     search_text,
                     sort_field=query.get('sort_field', [''])[0],
                     sort_order=query.get('sort_order', [''])[0],
                     limit=_int_query_value(query, 'limit', default=None),
                     offset=_int_query_value(query, 'offset', default=0),
+                    force_refresh=_is_truthy_query_value(query, 'refresh'),
                 )
             if method == 'GET' and path == '/database/actors/detail':
                 actor_name = query.get('name', [''])[0]
@@ -142,16 +143,20 @@ def make_handler(service):
                 return service.delete_actor(body.get('actor_name'))
             if method == 'GET' and path == '/database/code-prefixes':
                 search_text = query.get('q', [''])[0]
-                return service.list_code_prefixes(
+                return service.list_code_prefixes_snapshot(
                     search_text,
                     sort_field=query.get('sort_field', [''])[0],
                     sort_order=query.get('sort_order', [''])[0],
                     limit=_int_query_value(query, 'limit', default=None),
                     offset=_int_query_value(query, 'offset', default=0),
+                    force_refresh=_is_truthy_query_value(query, 'refresh'),
                 )
             if method == 'GET' and path == '/database/code-prefixes/detail':
                 prefix = query.get('prefix', [''])[0]
-                return service.get_code_prefix_detail(prefix)
+                return service.get_code_prefix_detail_snapshot(
+                    prefix,
+                    force_refresh=_is_truthy_query_value(query, 'refresh'),
+                )
             if method == 'POST' and path == '/database/code-prefixes/add':
                 return service.add_code_prefix(body.get('prefix'))
             if method == 'POST' and path == '/database/code-prefixes/detail/category':

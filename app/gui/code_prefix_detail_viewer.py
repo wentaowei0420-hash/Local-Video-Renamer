@@ -14,6 +14,9 @@ from PyQt5.QtWidgets import (
 )
 
 from app.core.ladder_board import LADDER_BOARD_CODE_PREFIX, LADDER_TIERS
+from app.gui.backend_task_worker import AsyncTaskHostMixin
+from app.gui.data_center_analysis_viewer import _build_refresh_client
+from app.gui.deferred_reload_mixin import DeferredReloadMixin
 from app.gui.detail_summary_widgets import DetailSummaryGrid, format_distribution_summary, format_update_frequency_summary
 from app.gui.i18n import tr
 from app.gui.video_category_batch_action_widget import VideoCategoryBatchActionWidget
@@ -22,12 +25,17 @@ from app.gui.video_filter_events import video_filter_event_bus
 from app.gui.video_list_detail_viewer import VideoListDetailWindow
 
 
-class CodePrefixDetailViewerWindow(QDialog):
+class CodePrefixDetailViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
     def __init__(self, backend_client, prefix, parent=None):
         super().__init__(parent)
         self.backend_client = backend_client
+        self.refresh_client = _build_refresh_client(backend_client)
         self.prefix = str(prefix or '').strip().upper()
         self.detail = {}
+        self._startup_refresh_pending = True
+        self._deferred_force_refresh = False
+        self._init_async_task_host()
+        self._init_deferred_reload(self._perform_deferred_load)
         video_filter_event_bus.rules_saved.connect(self.on_filter_rules_saved)
         video_category_update_event_bus.categories_updated.connect(self.on_video_categories_updated)
         self.init_ui()
@@ -77,12 +85,18 @@ class CodePrefixDetailViewerWindow(QDialog):
         self.btn_update_tier = QPushButton(tr('detail.update_tier'))
         self.btn_update_tier.clicked.connect(self.update_ladder_tier)
         action_layout.addWidget(self.btn_update_tier)
+        self.btn_refresh = QPushButton(tr('common.refresh'))
+        self.btn_refresh.clicked.connect(lambda: self.load_data(force_refresh=True))
+        action_layout.addWidget(self.btn_refresh)
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
+        action_layout.addWidget(self.last_refreshed_label)
         for button in (
             self.btn_prev_item,
             self.btn_next_item,
             self.btn_copy_prefix,
             self.btn_open_web,
             self.btn_update_tier,
+            self.btn_refresh,
         ):
             button.setMinimumHeight(30)
             button.setMinimumWidth(92)
@@ -158,15 +172,61 @@ class CodePrefixDetailViewerWindow(QDialog):
         layout.addWidget(local_movie_group)
         layout.addWidget(movie_group)
         layout.addStretch()
+        self.set_async_busy_widgets(
+            [
+                self.btn_prev_item,
+                self.btn_next_item,
+                self.btn_copy_prefix,
+                self.btn_open_web,
+                self.tier_combo,
+                self.btn_update_tier,
+                self.btn_refresh,
+                self.btn_local_movie_detail,
+                self.btn_movie_detail,
+                self.category_batch_widget.apply_button,
+                self.category_batch_widget.combo,
+            ]
+        )
 
-    def load_data(self):
-        try:
-            self.detail = self.backend_client.get_code_prefix_detail(self.prefix)
-        except Exception as exc:
-            QMessageBox.critical(self, tr('common.read_failed'), tr('code_prefix.detail.read_failed', error=exc))
-            self.reject()
+    def load_data(self, force_refresh=False):
+        if self.is_async_task_running():
+            self._deferred_force_refresh = self._deferred_force_refresh or bool(force_refresh)
+            self.schedule_deferred_reload(0)
             return
+        self.start_async_task(
+            lambda: self._load_detail_payload(force_refresh=force_refresh),
+            self._on_load_data_finished,
+            tr('common.read_failed'),
+        )
 
+    def _perform_deferred_load(self):
+        force_refresh = self._deferred_force_refresh
+        self._deferred_force_refresh = False
+        self.load_data(force_refresh=force_refresh)
+
+    def _load_detail_payload(self, force_refresh=False):
+        if hasattr(self.refresh_client, 'get_code_prefix_detail_snapshot'):
+            return self.refresh_client.get_code_prefix_detail_snapshot(self.prefix, force_refresh=force_refresh)
+        detail = self.backend_client.get_code_prefix_detail(self.prefix)
+        return {
+            'prefix_detail': dict(detail or {}),
+            'refreshed_at': '',
+            'cache_hit': False,
+        }
+
+    def _on_load_data_finished(self, result):
+        payload = dict(result or {})
+        self.detail = dict(payload.get('prefix_detail', payload.get('detail', payload or {})) or {})
+        self.last_refreshed_label.setText(
+            tr('data_center.last_refreshed', value=str(payload.get('refreshed_at', '') or '').strip() or tr('common.empty'))
+        )
+        self._apply_detail_to_widgets()
+        if self._startup_refresh_pending:
+            self._startup_refresh_pending = False
+            if bool(payload.get('cache_hit')):
+                self.load_data(force_refresh=True)
+
+    def _apply_detail_to_widgets(self):
         self.summary_grid.set_value('prefix', self.detail.get('prefix', ''))
         self.summary_grid.set_value('ladder_tier', self.detail.get('ladder_tier', '') or tr('common.empty'))
         self.summary_grid.set_value(
@@ -322,11 +382,11 @@ class CodePrefixDetailViewerWindow(QDialog):
 
     def on_filter_rules_saved(self):
         if self.isVisible():
-            self.load_data()
+            self.load_data(force_refresh=True)
 
     def on_video_categories_updated(self):
         if self.isVisible():
-            self.load_data()
+            self.load_data(force_refresh=True)
 
     def _detail_host(self):
         detail_host = self.parent()
@@ -356,6 +416,9 @@ class CodePrefixDetailViewerWindow(QDialog):
 
     def _switch_prefix(self, prefix):
         self.prefix = str(prefix or '').strip().upper()
+        self.detail = {}
+        self._startup_refresh_pending = True
+        self._deferred_force_refresh = False
         self.setWindowTitle(tr('code_prefix.detail.title', prefix=self.prefix))
         if hasattr(self.parent(), 'select_prefix_row'):
             self.parent().select_prefix_row(self.prefix)
@@ -372,4 +435,4 @@ class CodePrefixDetailViewerWindow(QDialog):
             parent.load_board()
             return
         if hasattr(parent, 'load_data'):
-            parent.load_data()
+            parent.load_data(force_refresh=True)

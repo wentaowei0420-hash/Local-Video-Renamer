@@ -199,6 +199,32 @@ class BackendClient:
             offset=offset,
         ).get('actors', [])
 
+    def list_actors_snapshot(
+        self,
+        search_text='',
+        sort_field=None,
+        sort_order=None,
+        limit=None,
+        offset=0,
+        force_refresh=False,
+    ):
+        params = {}
+        if search_text:
+            params['q'] = search_text
+        if sort_field:
+            params['sort_field'] = sort_field
+        if sort_order:
+            params['sort_order'] = sort_order
+        if limit is not None:
+            params['limit'] = int(limit)
+        if int(offset or 0) > 0:
+            params['offset'] = int(offset or 0)
+        if force_refresh:
+            params['refresh'] = '1'
+        query = ('?' + urlencode(params)) if params else ''
+        timeout = max(self.timeout, 120)
+        return self._get('/database/actors' + query, timeout=timeout)
+
     def list_actors_page(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
         params = {}
         if search_text:
@@ -259,6 +285,32 @@ class BackendClient:
             offset=offset,
         ).get('prefixes', [])
 
+    def list_code_prefixes_snapshot(
+        self,
+        search_text='',
+        sort_field=None,
+        sort_order=None,
+        limit=None,
+        offset=0,
+        force_refresh=False,
+    ):
+        params = {}
+        if search_text:
+            params['q'] = search_text
+        if sort_field:
+            params['sort_field'] = sort_field
+        if sort_order:
+            params['sort_order'] = sort_order
+        if limit is not None:
+            params['limit'] = int(limit)
+        if int(offset or 0) > 0:
+            params['offset'] = int(offset or 0)
+        if force_refresh:
+            params['refresh'] = '1'
+        query = ('?' + urlencode(params)) if params else ''
+        timeout = max(self.timeout, 120)
+        return self._get('/database/code-prefixes' + query, timeout=timeout)
+
     def list_code_prefixes_page(self, search_text='', sort_field=None, sort_order=None, limit=None, offset=0):
         params = {}
         if search_text:
@@ -277,6 +329,14 @@ class BackendClient:
     def get_code_prefix_detail(self, prefix):
         query = '?' + urlencode({'prefix': prefix})
         return self._get('/database/code-prefixes/detail' + query).get('prefix_detail', {})
+
+    def get_code_prefix_detail_snapshot(self, prefix, force_refresh=False):
+        params = {'prefix': prefix}
+        if force_refresh:
+            params['refresh'] = '1'
+        query = '?' + urlencode(params)
+        timeout = max(self.timeout, 120)
+        return self._get('/database/code-prefixes/detail' + query, timeout=timeout)
 
     def add_code_prefix(self, prefix):
         return self._post('/database/code-prefixes/add', {'prefix': prefix}).get('created_count', 0)

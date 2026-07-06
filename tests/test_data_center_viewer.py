@@ -75,6 +75,7 @@ class _BackendStub:
                 },
             },
             'refreshed_at': '2026-06-21 12:35:56' if force_refresh else '2026-06-21 12:34:56',
+            'refresh_duration_text': '1分20秒' if force_refresh else '55秒',
         }
 
     @staticmethod
@@ -91,6 +92,7 @@ class DataCenterViewerTest(unittest.TestCase):
             try:
                 self.assertEqual(backend.summary_refresh_flags, [False, True])
                 self.assertIn('2026-06-21 12:35:56', window.last_refreshed_label.text())
+                self.assertIn('1分20秒', window.last_refresh_duration_label.text())
             finally:
                 window.hide()
                 window.deleteLater()

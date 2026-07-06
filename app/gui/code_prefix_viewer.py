@@ -25,6 +25,7 @@ from app.gui.code_prefix_library_settings import (
     load_code_prefix_library_settings,
     save_code_prefix_library_settings,
 )
+from app.gui.data_center_analysis_viewer import _build_refresh_client
 from app.gui.code_prefix_library_sorting import (
     CODE_PREFIX_SORT_FIELDS,
     CODE_PREFIX_SORT_ORDERS,
@@ -48,6 +49,7 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
     def __init__(self, backend_client, parent=None):
         super().__init__(parent)
         self.backend_client = backend_client
+        self.refresh_client = _build_refresh_client(backend_client)
         self.all_rows = []
         self.rows = []
         self.total_count = 0
@@ -59,9 +61,11 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.editing_prefix = None
         self.editing_row = None
         self.action_buttons = {}
+        self._startup_refresh_pending = True
+        self._deferred_force_refresh = False
         self.sort_settings = load_code_prefix_library_settings()
         self._init_async_task_host()
-        self._init_deferred_reload(self.load_data)
+        self._init_deferred_reload(self._perform_deferred_load)
         self.init_ui()
         self.load_data()
 
@@ -113,11 +117,13 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.btn_reset_javtxt.clicked.connect(lambda: self.reset_selected_rows(JAVTXT_VIDEO_SOURCE))
 
         self.btn_refresh = QPushButton(tr('common.refresh'))
-        self.btn_refresh.clicked.connect(self.load_data)
+        self.btn_refresh.clicked.connect(lambda: self.load_data(force_refresh=True))
         self.btn_prev_page = QPushButton(tr('video.category.page_prev'))
         self.btn_prev_page.clicked.connect(self.go_to_previous_page)
         self.btn_next_page = QPushButton(tr('video.category.page_next'))
         self.btn_next_page.clicked.connect(self.go_to_next_page)
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
+        self.last_refresh_duration_label = QLabel(tr('common.duration', value=tr('common.empty')))
         self.page_info_label = QLabel('')
 
         filter_layout.addWidget(QLabel(tr('common.filter_realtime')))
@@ -132,6 +138,8 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         filter_layout.addStretch()
 
         action_layout.addStretch()
+        action_layout.addWidget(self.last_refreshed_label)
+        action_layout.addWidget(self.last_refresh_duration_label)
         action_layout.addWidget(self.btn_apply_sort)
         action_layout.addWidget(self.btn_add)
         action_layout.addWidget(self.btn_reset_avfan)
@@ -174,9 +182,10 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         )
         self._update_page_controls()
 
-    def load_data(self):
+    def load_data(self, force_refresh=False):
         if self.is_async_task_running():
-            self.schedule_deferred_reload(0)
+            self._deferred_force_refresh = self._deferred_force_refresh or bool(force_refresh)
+            self.schedule_deferred_reload(0 if force_refresh else None)
             return
         search_text = self.search_input.text().strip()
         sort_field = self.sort_settings.get('sort_field', DEFAULT_CODE_PREFIX_SORT_FIELD)
@@ -188,10 +197,16 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
                 sort_order=sort_order,
                 limit=self.page_size,
                 offset=self.current_offset,
+                force_refresh=force_refresh,
             ),
             self._on_load_data_finished,
             tr('common.read_failed'),
         )
+
+    def _perform_deferred_load(self):
+        force_refresh = self._deferred_force_refresh
+        self._deferred_force_refresh = False
+        self.load_data(force_refresh=force_refresh)
 
     def render_rows(self, rows):
         self.action_buttons = {}
@@ -612,6 +627,10 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.total_count = int(payload.get('total_count', len(self.all_rows)) or 0)
         self.current_offset = int(payload.get('offset', self.current_offset) or 0)
         self.page_size = int(payload.get('limit', self.page_size) or self.page_size)
+        refreshed_at = str(payload.get('refreshed_at', '') or '').strip() or tr('common.empty')
+        refresh_duration_text = str(payload.get('refresh_duration_text', '') or '').strip() or tr('common.empty')
+        self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
+        self.last_refresh_duration_label.setText(tr('common.duration', value=refresh_duration_text))
         self.rebuild_visible_rows()
         self.page_info_label.setText(
             tr(
@@ -623,6 +642,10 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             )
         )
         self._update_page_controls()
+        if self._startup_refresh_pending:
+            self._startup_refresh_pending = False
+            if bool(payload.get('cache_hit')):
+                self.load_data(force_refresh=True)
 
     def _on_reset_finished(self, result):
         self._on_load_data_finished(result)
@@ -681,7 +704,7 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             for row_data in self.all_rows
         )
 
-    def _current_prefix_page_loader(self):
+    def _current_prefix_page_loader(self, force_refresh=False):
         search_text = self.search_input.text().strip()
         return self._list_code_prefixes_payload(
             search_text,
@@ -689,12 +712,13 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             sort_order=self.sort_settings.get('sort_order', DEFAULT_CODE_PREFIX_SORT_ORDER),
             limit=self.page_size,
             offset=self.current_offset,
+            force_refresh=force_refresh,
         )
 
     def _reload_prefix_page_after(self, operation, **payload):
         operation()
         return {
-            **self._current_prefix_page_loader(),
+            **self._current_prefix_page_loader(force_refresh=True),
             **payload,
         }
 
@@ -722,7 +746,24 @@ class CodePrefixViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.btn_prev_page.setEnabled((not busy) and self.current_offset > 0)
         self.btn_next_page.setEnabled((not busy) and (self.current_offset + len(self.all_rows) < self.total_count))
 
-    def _list_code_prefixes_payload(self, search_text='', sort_field='prefix', sort_order='asc', limit=None, offset=0):
+    def _list_code_prefixes_payload(
+        self,
+        search_text='',
+        sort_field='prefix',
+        sort_order='asc',
+        limit=None,
+        offset=0,
+        force_refresh=False,
+    ):
+        if hasattr(self.refresh_client, 'list_code_prefixes_snapshot'):
+            return self.refresh_client.list_code_prefixes_snapshot(
+                search_text=search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+                force_refresh=force_refresh,
+            )
         if hasattr(self.backend_client, 'list_code_prefixes_page'):
             return self.backend_client.list_code_prefixes_page(
                 search_text=search_text,

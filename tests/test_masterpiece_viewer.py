@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QApplication, QDialog
 
 from app.gui.backend_task_worker import AsyncTaskHostMixin
@@ -146,6 +147,21 @@ class MasterpieceViewerTest(unittest.TestCase):
         finally:
             window.hide()
             window.deleteLater()
+
+    def test_close_event_ignores_close_while_async_task_running(self):
+        backend = MasterpieceBackendStub()
+
+        with patch.object(AsyncTaskHostMixin, 'start_async_task', _run_sync_async_task):
+            window = MasterpieceWindow(backend)
+            try:
+                event = QCloseEvent()
+                with patch.object(window, 'block_close_while_async_running', return_value=True) as block_mock:
+                    window.closeEvent(event)
+
+                block_mock.assert_called_once_with(event)
+            finally:
+                window.hide()
+                window.deleteLater()
 
 
 if __name__ == '__main__':

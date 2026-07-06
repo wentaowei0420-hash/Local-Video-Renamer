@@ -58,6 +58,7 @@ class ActorListBackendStub:
 class CodePrefixListBackendStub:
     def __init__(self):
         self.calls = []
+        self.snapshot_calls = []
 
     def list_code_prefixes_page(self, search_text='', sort_field='prefix', sort_order='asc', limit=200, offset=0):
         self.calls.append((search_text, sort_field, sort_order, limit, offset))
@@ -75,6 +76,34 @@ class CodePrefixListBackendStub:
             'total_count': 500,
             'limit': limit,
             'offset': offset,
+        }
+
+    def list_code_prefixes_snapshot(
+        self,
+        search_text='',
+        sort_field='prefix',
+        sort_order='asc',
+        limit=200,
+        offset=0,
+        force_refresh=False,
+    ):
+        self.snapshot_calls.append((search_text, sort_field, sort_order, limit, offset, bool(force_refresh)))
+        return {
+            'prefixes': [
+                {
+                    'prefix': f'PFX-{offset}',
+                    'video_count': 1,
+                    'enrichment_status': '',
+                    'avfan_total_videos': 0,
+                    'earliest_release_date': '',
+                    'latest_release_date': '',
+                }
+            ],
+            'total_count': 500,
+            'limit': limit,
+            'offset': offset,
+            'refreshed_at': '2026-07-06 14:00:00' if force_refresh else '2026-07-06 13:59:00',
+            'cache_hit': not force_refresh,
         }
 
 
@@ -123,9 +152,12 @@ class PagedListViewerTest(unittest.TestCase):
         ):
             window = CodePrefixViewerWindow(backend)
             try:
-                self.assertEqual(backend.calls[0], ('', 'prefix', 'asc', window.page_size, 0))
+                self.assertEqual(backend.snapshot_calls[0], ('', 'prefix', 'asc', window.page_size, 0, False))
                 window.go_to_next_page()
-                self.assertEqual(backend.calls[1], ('', 'prefix', 'asc', window.page_size, window.page_size))
+                self.assertEqual(
+                    backend.snapshot_calls[-1],
+                    ('', 'prefix', 'asc', window.page_size, window.page_size, False),
+                )
             finally:
                 window.hide()
                 window.deleteLater()

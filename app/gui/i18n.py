@@ -5,6 +5,7 @@ from app.gui.i18n_patch import GUI_TEXT_PATCHES
 
 
 BASE_GUI_TEXTS = {
+    'common.duration': '耗时: {value}',
     'common.current': '当前: {value}',
     'common.empty': '暂无',
     'common.filter': '筛选:',

@@ -33,6 +33,7 @@ from app.gui.actor_library_sorting import (
     sort_actor_rows,
 )
 from app.gui.backend_task_worker import AsyncTaskHostMixin
+from app.gui.data_center_analysis_viewer import _build_refresh_client
 from app.gui.deferred_reload_mixin import DeferredReloadMixin
 from app.gui.i18n import tr
 from app.core.enrichment_sources import build_library_enrichment_status_text
@@ -54,6 +55,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
     def __init__(self, backend_client, parent=None):
         super().__init__(parent)
         self.backend_client = backend_client
+        self.refresh_client = _build_refresh_client(backend_client)
         self.all_rows = []
         self.rows = []
         self.total_count = 0
@@ -67,9 +69,11 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.editing_actor_original = None
         self.actor_profile_update_service = ActorProfileUpdateService()
         self.action_buttons = {}
+        self._startup_refresh_pending = True
+        self._deferred_force_refresh = False
         self.sort_settings = load_actor_library_settings()
         self._init_async_task_host()
-        self._init_deferred_reload(self.load_data)
+        self._init_deferred_reload(self._perform_deferred_load)
         self.init_ui()
         self.load_data()
 
@@ -127,11 +131,13 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.btn_reset_baomu.clicked.connect(lambda: self.reset_selected_rows(BAOMU_ACTOR_SOURCE))
 
         self.btn_refresh = QPushButton(tr('common.refresh'))
-        self.btn_refresh.clicked.connect(self.load_data)
+        self.btn_refresh.clicked.connect(lambda: self.load_data(force_refresh=True))
         self.btn_prev_page = QPushButton(tr('video.category.page_prev'))
         self.btn_prev_page.clicked.connect(self.go_to_previous_page)
         self.btn_next_page = QPushButton(tr('video.category.page_next'))
         self.btn_next_page.clicked.connect(self.go_to_next_page)
+        self.last_refreshed_label = QLabel(tr('data_center.last_refreshed', value=tr('common.empty')))
+        self.last_refresh_duration_label = QLabel(tr('common.duration', value=tr('common.empty')))
         self.page_info_label = QLabel('')
 
         filter_layout.addWidget(QLabel(tr('common.filter_realtime')))
@@ -152,6 +158,8 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         action_layout.addWidget(self.btn_reset_javtxt)
         action_layout.addWidget(self.btn_reset_binghuo)
         action_layout.addWidget(self.btn_reset_baomu)
+        action_layout.addWidget(self.last_refreshed_label)
+        action_layout.addWidget(self.last_refresh_duration_label)
         action_layout.addWidget(self.page_info_label)
         action_layout.addWidget(self.btn_prev_page)
         action_layout.addWidget(self.btn_next_page)
@@ -221,9 +229,10 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.table.setColumnWidth(ACTOR_COLUMN_DETAIL, detail_width)
         self.table.setColumnWidth(ACTOR_COLUMN_ACTIONS, action_width)
 
-    def load_data(self):
+    def load_data(self, force_refresh=False):
         if self.is_async_task_running():
-            self.schedule_deferred_reload(0)
+            self._deferred_force_refresh = self._deferred_force_refresh or bool(force_refresh)
+            self.schedule_deferred_reload(0 if force_refresh else None)
             return
         search_text = self.search_input.text().strip()
         sort_field = self.sort_settings.get('sort_field', DEFAULT_ACTOR_SORT_FIELD)
@@ -235,10 +244,16 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
                 sort_order=sort_order,
                 limit=self.page_size,
                 offset=self.current_offset,
+                force_refresh=force_refresh,
             ),
             self._on_load_data_finished,
             tr('common.read_failed'),
         )
+
+    def _perform_deferred_load(self):
+        force_refresh = self._deferred_force_refresh
+        self._deferred_force_refresh = False
+        self.load_data(force_refresh=force_refresh)
 
     def render_rows(self, rows):
         self.action_buttons = {}
@@ -749,6 +764,10 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
         self.total_count = int(payload.get('total_count', len(self.all_rows)) or 0)
         self.current_offset = int(payload.get('offset', self.current_offset) or 0)
         self.page_size = int(payload.get('limit', self.page_size) or self.page_size)
+        refreshed_at = str(payload.get('refreshed_at', '') or '').strip() or tr('common.empty')
+        refresh_duration_text = str(payload.get('refresh_duration_text', '') or '').strip() or tr('common.empty')
+        self.last_refreshed_label.setText(tr('data_center.last_refreshed', value=refreshed_at))
+        self.last_refresh_duration_label.setText(tr('common.duration', value=refresh_duration_text))
         self.rebuild_visible_rows()
         current_page = self.current_page_number()
         total_pages = max((self.total_count + self.page_size - 1) // self.page_size, 1)
@@ -762,6 +781,10 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             )
         )
         self._update_page_controls()
+        if self._startup_refresh_pending:
+            self._startup_refresh_pending = False
+            if bool(payload.get('cache_hit')):
+                self.load_data(force_refresh=True)
 
     def _on_reset_finished(self, result):
         self._on_load_data_finished(result)
@@ -820,7 +843,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             for row_data in self.all_rows
         )
 
-    def _current_actor_page_loader(self):
+    def _current_actor_page_loader(self, force_refresh=False):
         search_text = self.search_input.text().strip()
         return self._list_actors_payload(
             search_text,
@@ -828,9 +851,27 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
             sort_order=self.sort_settings.get('sort_order', DEFAULT_ACTOR_SORT_ORDER),
             limit=self.page_size,
             offset=self.current_offset,
+            force_refresh=force_refresh,
         )
 
-    def _list_actors_payload(self, search_text='', sort_field='name', sort_order='asc', limit=None, offset=0):
+    def _list_actors_payload(
+        self,
+        search_text='',
+        sort_field='name',
+        sort_order='asc',
+        limit=None,
+        offset=0,
+        force_refresh=False,
+    ):
+        if hasattr(self.refresh_client, 'list_actors_snapshot'):
+            return self.refresh_client.list_actors_snapshot(
+                search_text=search_text,
+                sort_field=sort_field,
+                sort_order=sort_order,
+                limit=limit,
+                offset=offset,
+                force_refresh=force_refresh,
+            )
         if hasattr(self.backend_client, 'list_actors_page'):
             return self.backend_client.list_actors_page(
                 search_text,
@@ -850,7 +891,7 @@ class ActorViewerWindow(DeferredReloadMixin, AsyncTaskHostMixin, QDialog):
     def _reload_actor_page_after(self, operation, **payload):
         operation()
         return {
-            **self._current_actor_page_loader(),
+            **self._current_actor_page_loader(force_refresh=True),
             **payload,
         }
 

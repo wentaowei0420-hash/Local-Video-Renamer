@@ -246,3 +246,8 @@ class MasterpieceWindow(QDialog, AsyncTaskHostMixin):
     def show_detail(self, code):
         dialog = MasterpieceDetailWindow(self.backend_client, code, self)
         dialog.exec_()
+
+    def closeEvent(self, event):
+        if self.block_close_while_async_running(event):
+            return
+        super().closeEvent(event)

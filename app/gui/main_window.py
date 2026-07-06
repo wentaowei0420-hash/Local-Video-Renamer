@@ -1,3 +1,4 @@
+import ctypes
 import os
 import sqlite3
 import subprocess
@@ -6,7 +7,8 @@ import time
 import uuid
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, QTimer, Qt, pyqtSignal
+from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QCoreApplication, QObject, QTimer, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -38,6 +40,7 @@ from app.gui.backend_task_worker import AsyncTaskHostMixin
 from app.gui.canglangge_viewer import CanglanggeViewerWindow
 from app.gui.code_prefix_viewer import CodePrefixViewerWindow
 from app.gui.data_center_viewer import DataCenterWindow
+from app.gui.data_center_analysis_viewer import _build_refresh_client
 from app.gui.db_viewer import DatabaseViewerWindow
 from app.gui.enrichment_dialog import EnrichmentDialog
 from app.gui.gui_task_runner import GuiTaskRunner
@@ -146,6 +149,23 @@ class AutoLoginWorker(QObject):
         self.finished.emit(result)
 
 
+class SnapshotRefreshWorker(QObject):
+    finished = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, refresh_callback):
+        super().__init__()
+        self.refresh_callback = refresh_callback
+
+    def run(self):
+        try:
+            result = self.refresh_callback()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(dict(result or {}))
+
+
 class VidNormApp(QWidget, AsyncTaskHostMixin):
     def __init__(self):
         super().__init__()
@@ -182,6 +202,12 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         self.login_thread = None
         self.login_worker = None
         self.login_task_runner = None
+        self.snapshot_refresh_worker = None
+        self.snapshot_refresh_task_runner = None
+        self.snapshot_refresh_running = False
+        self.snapshot_refresh_timer = QTimer(self)
+        self.snapshot_refresh_timer.setInterval(3 * 60 * 60 * 1000)
+        self.snapshot_refresh_timer.timeout.connect(self.schedule_snapshot_refresh_cycle)
         self._init_async_task_host()
 
         self.ensure_backend_running()
@@ -190,6 +216,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         self.reset_progress_widgets()
         self.start_network_guard()
         self.check_network_guard()
+        self.start_snapshot_refresh_scheduler()
 
     def ensure_backend_running(self):
         stale_backend_cleaned = False
@@ -1572,6 +1599,48 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         if viewer.exec_() and viewer.selected_path:
             self.set_current_folder(viewer.selected_path)
 
+    def start_snapshot_refresh_scheduler(self):
+        self.snapshot_refresh_timer.start()
+        QTimer.singleShot(0, self.schedule_snapshot_refresh_cycle)
+
+    def schedule_snapshot_refresh_cycle(self):
+        if self.snapshot_refresh_running:
+            return False
+        self.snapshot_refresh_running = True
+        self.snapshot_refresh_worker = self._create_snapshot_refresh_worker()
+        self.snapshot_refresh_task_runner = GuiTaskRunner(
+            self.snapshot_refresh_worker,
+            self._on_snapshot_refresh_finished,
+            self._on_snapshot_refresh_failed,
+        )
+        self.snapshot_refresh_task_runner.start()
+        return True
+
+    def _create_snapshot_refresh_worker(self):
+        refresh_client = _build_refresh_client(self.backend_client, minimum_timeout=600)
+        return SnapshotRefreshWorker(lambda: self._run_snapshot_refresh_cycle(refresh_client=refresh_client))
+
+    def _run_snapshot_refresh_cycle(self, refresh_client=None):
+        active_client = refresh_client or _build_refresh_client(self.backend_client, minimum_timeout=600)
+        self.snapshot_refresh_running = True
+        try:
+            active_client.list_actors_snapshot(force_refresh=True)
+            active_client.list_code_prefixes_snapshot(force_refresh=True)
+            active_client.get_data_center_summary(force_refresh=True)
+            return {'success': True}
+        finally:
+            self.snapshot_refresh_running = False
+
+    def _on_snapshot_refresh_finished(self, result):
+        self.snapshot_refresh_running = False
+        self.snapshot_refresh_worker = None
+        self.snapshot_refresh_task_runner = None
+
+    def _on_snapshot_refresh_failed(self, error_message):
+        self.snapshot_refresh_running = False
+        self.snapshot_refresh_worker = None
+        self.snapshot_refresh_task_runner = None
+
     def closeEvent(self, event):
         if self.block_close_while_async_running(event):
             return
@@ -1599,6 +1668,7 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
             )
             event.ignore()
             return
+        self.snapshot_refresh_timer.stop()
         self.stop_owned_backend()
         super().closeEvent(event)
 
@@ -1615,9 +1685,107 @@ class VidNormApp(QWidget, AsyncTaskHostMixin):
         return Qt.black
 
 
+def configure_qt_application():
+    QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    rounding_policy_enum = getattr(Qt, 'HighDpiScaleFactorRoundingPolicy', None)
+    pass_through_policy = getattr(rounding_policy_enum, 'PassThrough', None)
+    if pass_through_policy is not None and hasattr(QApplication, 'setHighDpiScaleFactorRoundingPolicy'):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(pass_through_policy)
+
+
+def configure_application_font(app):
+    current_font = app.font()
+    if not _is_suspicious_application_font(current_font):
+        return
+
+    replacement_font = _resolve_windows_message_font()
+    if replacement_font is None:
+        return
+    app.setFont(replacement_font)
+
+
+def _is_suspicious_application_font(font):
+    family = str(font.family() or '').strip().lower()
+    point_size = int(font.pointSize() or 0)
+    if point_size <= 0:
+        return False
+    if point_size <= 7:
+        return True
+    return family in {'simsun'} and point_size <= 8
+
+
+def _resolve_windows_message_font():
+    if sys.platform != 'win32':
+        return None
+    try:
+        class LOGFONTW(ctypes.Structure):
+            _fields_ = [
+                ('lfHeight', ctypes.c_long),
+                ('lfWidth', ctypes.c_long),
+                ('lfEscapement', ctypes.c_long),
+                ('lfOrientation', ctypes.c_long),
+                ('lfWeight', ctypes.c_long),
+                ('lfItalic', ctypes.c_ubyte),
+                ('lfUnderline', ctypes.c_ubyte),
+                ('lfStrikeOut', ctypes.c_ubyte),
+                ('lfCharSet', ctypes.c_ubyte),
+                ('lfOutPrecision', ctypes.c_ubyte),
+                ('lfClipPrecision', ctypes.c_ubyte),
+                ('lfQuality', ctypes.c_ubyte),
+                ('lfPitchAndFamily', ctypes.c_ubyte),
+                ('lfFaceName', ctypes.c_wchar * 32),
+            ]
+
+        class NONCLIENTMETRICSW(ctypes.Structure):
+            _fields_ = [
+                ('cbSize', ctypes.c_uint),
+                ('iBorderWidth', ctypes.c_int),
+                ('iScrollWidth', ctypes.c_int),
+                ('iScrollHeight', ctypes.c_int),
+                ('iCaptionWidth', ctypes.c_int),
+                ('iCaptionHeight', ctypes.c_int),
+                ('lfCaptionFont', LOGFONTW),
+                ('iSmCaptionWidth', ctypes.c_int),
+                ('iSmCaptionHeight', ctypes.c_int),
+                ('lfSmCaptionFont', LOGFONTW),
+                ('iMenuWidth', ctypes.c_int),
+                ('iMenuHeight', ctypes.c_int),
+                ('lfMenuFont', LOGFONTW),
+                ('lfStatusFont', LOGFONTW),
+                ('lfMessageFont', LOGFONTW),
+                ('iPaddedBorderWidth', ctypes.c_int),
+            ]
+
+        metrics = NONCLIENTMETRICSW()
+        metrics.cbSize = ctypes.sizeof(NONCLIENTMETRICSW)
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0029, metrics.cbSize, ctypes.byref(metrics), 0):
+            return None
+
+        face_name = str(metrics.lfMessageFont.lfFaceName or '').strip()
+        if not face_name:
+            return None
+
+        dpi = 96.0
+        desktop = ctypes.windll.user32.GetDC(0)
+        if desktop:
+            try:
+                dpi = float(ctypes.windll.gdi32.GetDeviceCaps(desktop, 90) or 96)
+            finally:
+                ctypes.windll.user32.ReleaseDC(0, desktop)
+
+        point_size = max(9, int(round((abs(int(metrics.lfMessageFont.lfHeight or -12)) * 72.0) / max(dpi, 1.0))))
+        font = QFont(face_name, point_size)
+        return font
+    except Exception:
+        return None
+
+
 def main():
+    configure_qt_application()
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    configure_application_font(app)
     try:
         window = VidNormApp()
     except Exception as exc:
